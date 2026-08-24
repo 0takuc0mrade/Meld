@@ -209,3 +209,72 @@ Paused Tokio time makes timeout tests complete without wall-clock delay.
 - `cargo-deny`/`deny.toml` and `cargo-vet` remain future hardening; source, license, duplicates, native links, build scripts, and RustSec were inspected directly in this phase.
 - Graceful shutdown and explicit tracking/draining of all detached tasks belong to the server lifecycle in Phase 2.
 - HTTP, SSE, UI, Rig, provider calls, persistence, authentication, and heartbeats remain unimplemented by design.
+
+## 2026-08-24 — Phase 2: Axum, SSE, and execution-map frontend
+
+### Dependency review before implementation
+
+The candidate graph was resolved in an isolated `/tmp` manifest before `Cargo.toml` changed. Axum’s `query` feature and a direct `serde_json` dependency were removed because the API has no query input and Axum’s JSON/SSE support already owns serialization internally. The accepted runtime additions are exact versions:
+
+- `axum 0.8.9` with defaults disabled and only `http1`, `json`, `tokio`, and `tracing`;
+- `serde 1.0.229` with `derive` for transport DTOs only;
+- `tokio-stream 0.1.19` with defaults disabled and only `sync`;
+- existing `tokio 1.53.1` gains `net` and `signal`.
+
+Tests directly use the already-transitive `tower 0.5.3` `util` feature and `http-body-util 0.1.5`. The complete lockfile grew from 17 to 60 external crates (43 new). All sources are checksum-locked crates.io registry packages. No Git source, alternate registry, native `links` package, frontend package, or CDN asset was introduced.
+
+### Axum API and application server
+
+Added `src/api.rs` with four product endpoints: health, start demo, task snapshot, and task SSE. The demo endpoint creates a normal mission, wraps two normal `SuccessfulWorker` values in `ControlledDelayWorker`, and hands them to `Supervisor::run_task`. It never mutates task state or publishes an event directly.
+
+Transport DTOs manually map the domain into safe browser fields. API failures use a stable JSON envelope and do not expose debug strings or stack traces. Static files are embedded with `include_str!`, served with explicit content types, and the page receives a local-only Content Security Policy.
+
+`main.rs` now creates the existing supervisor/verifier, binds `127.0.0.1:3000`, serves the Axum router, and handles Ctrl+C graceful HTTP shutdown.
+
+### SSE replay and resynchronization
+
+The SSE handler subscribes to broadcast before taking the task snapshot. It replays retained events after the optional `Last-Event-ID`, then forwards live events. A sequence cursor removes overlap between history and broadcast. Each domain event uses its Meld sequence as the SSE `id`.
+
+Each connection has a bounded 32-item MPSC bridge. If broadcast reports a lagged receiver, the handler emits `event: resync`; the browser refetches snapshot/history. Slow or disconnected clients cannot block the supervisor.
+
+### User-facing frontend
+
+Added a dependency-free, locally served frontend with a Cobalt Map/Diagram design. The primary view is a spatial Worker A → Meld → Worker B → verifier topology rather than a generic dashboard. An event ledger translates backend event kinds into readable sentences; an accepted-result panel proves recovery, reassignment, deterministic acceptance, and stale rejection only after the corresponding events exist.
+
+The frontend stores only the last task ID in `localStorage`. A refresh always requests the authoritative snapshot and history again. JavaScript contains no timeout that advances lifecycle state. The command palette supports Ctrl/Command-K, filtering, arrows, Enter, Escape, backdrop dismissal, and managed focus. The page includes semantic structure, visible focus, ≥44 px controls, icon/label/color status, reduced motion, and layouts for 320, 375, 414, 768, and desktop widths.
+
+### Automated tests
+
+Added seven transport tests covering readiness, demo creation, snapshot retrieval, typed invalid/unknown-task errors, SSE replay and `Last-Event-ID`, complete/stale authority, fresh task histories, and local static/security headers. Paused Tokio time drives the complete deadline/recovery/late-return path without real sleeps.
+
+At the first full Phase 2 test pass, all 7 API tests and all 9 unchanged Phase 1 lifecycle tests passed. Formatting was applied once after rustfmt reported only layout differences.
+
+The pinned `/tmp` `cargo-audit 0.22.2` refreshed a 1,225-advisory RustSec database and reported no vulnerable crate across the 61 lockfile records. The crates.io yanked-version lookup timed out, so the clean advisory scan was rerun with `--no-yanked`; the documentation does not overstate yanked-status coverage.
+
+### Problems encountered and fixes
+
+- `cargo check --locked` correctly refused to proceed before the reviewed dependency graph was written to `Cargo.lock`; the lockfile was generated offline, then locked builds succeeded.
+- The managed global Cargo cache was read-only during the isolated graph review. One approved Cargo metadata/download step populated the cache; project builds then ran offline.
+- Axum’s default/query features initially pulled unnecessary form/query packages. The feature was removed before the project manifest changed.
+- A direct `serde_json` dependency was unnecessary. SSE uses Axum’s `Event::json_data`, keeping Meld’s direct API surface smaller even though JSON remains an Axum transitive.
+
+### Manual validation
+
+The real Axum process was exercised in local headless Chrome through the browser protocol, not a DOM-only test harness. The inspected sequence was:
+
+1. initial idle page;
+2. start a fresh mission;
+3. Worker A running with SSE connected;
+4. full page refresh during Worker A, restoring the same task from snapshot/history;
+5. backend lease expiry and recovery;
+6. Worker B generation 2 accepted after deterministic policy checks;
+7. Worker A’s late generation 1 result rejected;
+8. accepted Worker B output and completed state unchanged.
+
+The completed page showed all 13 expected backend events in order. The command palette opened with focus in search and closed by Escape after an explicit cancel-handler fix. Chrome reported no horizontal overflow or wrapped clickable affordance at every 40 px step from 320 through 1920, with explicit checks at 320, 375, 414, 768, and 1440 px. At 1280 × 800, both the headline and primary action fit above the fold. A `prefers-reduced-motion: reduce` browser emulation matched the media query, changed root scrolling to `auto`, and collapsed control transitions. Desktop and 375 px full-page screenshots were inspected; the execution map changes from an asymmetric horizontal topology to a clear vertical flow. A narrow Worker B result label wrapped awkwardly in the first screenshot and was shortened from “Authoritative” to the equally accurate “Accepted.”
+
+Recovery itself is a deliberately short authoritative transition: `run_task` assigns Worker B immediately after expiry. A refresh in that interval reconstructs either `Recovering` or the already-newer generation-2 state plus the retained expiry/reassignment history; it never reconstructs an invented intermediate browser state.
+
+### Phase boundary
+
+Rig and real model providers remain absent. Phase 2 stops after the real backend-controlled browser sequence is validated.

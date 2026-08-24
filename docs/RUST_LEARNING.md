@@ -175,9 +175,9 @@ enum SubmitError {
 
 Worker errors, invalid commands, and internal bugs should not all become the same HTTP 500 response. They have different recovery and observability meanings.
 
-## Serde (deliberately deferred)
+## Serde at the transport boundary
 
-**Where:** Nowhere in Phase 1. It will likely appear at the Phase 2 HTTP/SSE boundary.
+**Where:** Response DTOs in `src/api.rs`.
 
 **Why:** The Rust domain needs a controlled boundary to browser JSON.
 
@@ -185,7 +185,7 @@ Worker errors, invalid commands, and internal bugs should not all become the sam
 
 **Without it:** Manual parsing would be verbose and more likely to accept malformed or ambiguous payloads.
 
-Deferring Serde kept Phase 1's dependency graph smaller and prevented transport annotations from shaping the domain prematurely. When it is added, deserialization will not count as validation by itself: length limits, enum restrictions, required fields, and mission-specific rules must still run before state changes.
+Deferring Serde kept Phase 1's dependency graph smaller and prevented transport annotations from shaping the domain. Phase 2 derives `Serialize` only on API response types. Domain types still have no Serde annotations, and the demo command accepts no browser-authored mission payload, so deserialization cannot bypass domain policy.
 
 ## Broadcast channels
 
@@ -290,3 +290,57 @@ For the demo, Worker A intentionally remains alive long enough to submit generat
 **Problem solved:** Abrupt termination can truncate logs and leave clients uncertain.
 
 The in-memory MVP cannot resume tasks after process death. Graceful shutdown improves behavior but does not create durability; that requires persistent state and recovery logic later.
+
+## Axum `Router` and handlers
+
+**Where:** `api::router`, `health`, `start_demo`, `task_snapshot`, and `task_events`.
+
+**What:** A `Router` matches an HTTP method and path to an async Rust function. Axum turns a handler’s extractors into inputs and anything implementing `IntoResponse` into the HTTP response.
+
+**Why Meld needs it:** The browser needs a narrow way to create the controlled mission, read authority, and observe committed events. Handlers call `Supervisor`; they do not duplicate transition code.
+
+**Connection to existing concepts:** A handler is an async function running on the same Tokio runtime as worker/deadline tasks. Axum can run many handlers concurrently, while `Arc<Supervisor>` and its mutex preserve the single authority.
+
+## Axum extractors: `State` and `Path`
+
+**Where:** `State<ApiState>` shares the supervisor; `Path<String>` obtains a task ID from the URL.
+
+**What:** Extractors ask Axum to construct typed handler inputs from application state or the request.
+
+**Why the task ID starts as `String`:** Meld parses it itself so malformed values receive the same typed JSON error envelope as other API failures instead of Axum’s default text rejection.
+
+**Ownership connection:** `ApiState` is cheap to clone because it contains an `Arc<Supervisor>`. Each handler owns its clone while all clones point to the same store.
+
+## JSON responses and typed HTTP errors
+
+**Where:** `Json<T>`, `TaskSnapshotResponse`, `EventResponse`, and `ApiError::into_response`.
+
+**What:** Serde converts response structs containing strings/numbers/options into JSON. `ApiError` pairs an HTTP status with a stable code and safe message.
+
+**Problem solved:** Browsers can distinguish `invalid_task_id`, `task_not_found`, and `internal_error`; internal Rust debug output never crosses the boundary. Detailed context remains in tracing.
+
+## SSE as an async stream
+
+**Where:** `task_events` and its `ReceiverStream`.
+
+**What:** The handler returns a stream of `Event` values instead of one completed body. Axum polls it whenever the socket can accept more bytes; the task does not block an OS thread while waiting.
+
+**Why Meld needs it:** Domain events travel server-to-browser immediately, and native `EventSource` reconnects with the last SSE ID. HTTP remains responsible for commands and snapshots.
+
+**Ownership/lifetime connection:** The spawned forwarding task owns its broadcast receiver, replay vector, cursor, task ID, and MPSC sender. Owning those values satisfies the `'static` requirement of `tokio::spawn`.
+
+## Broadcast lag and the MPSC bridge
+
+**Where:** `task_events` receives from `broadcast`, then sends framed SSE events through a 32-item `mpsc` channel wrapped by `ReceiverStream`.
+
+**What:** Broadcast fans each committed fact to all subscribers. MPSC gives one HTTP response a bounded producer/consumer bridge.
+
+**Problem solved:** If broadcast returns `Lagged`, the handler does not pretend delivery was complete. It emits `event: resync`; JavaScript refetches the snapshot and bounded history. Browser speed never backpressures the supervisor.
+
+## Graceful server shutdown
+
+**Where:** `main` awaits `tokio::signal::ctrl_c()` through Axum’s `with_graceful_shutdown`.
+
+**What:** The listener stops accepting new connections and lets active HTTP work wind down.
+
+**Limit:** Detached controlled workers are still protected by generation checks, but Phase 2 does not yet maintain a global `JoinSet` to drain them. Process exit still loses the in-memory store.

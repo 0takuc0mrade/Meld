@@ -9,23 +9,25 @@ Meld keeps work running when an agent fails and verifies the work before accepti
 
 A worker cannot set a task to `Completed`. It can only submit a typed candidate result together with the assignment token it was given. The supervisor decides whether that token is current, whether the transition is allowed, and whether verification passes.
 
-## Phase 1 implementation status
+## Phase 2 implementation status
 
-The deterministic kernel is implemented and tested. `src/domain.rs` contains the types and `TaskState`; `src/supervisor.rs` is the only state mutation boundary; `src/worker.rs` contains the object-safe worker trait and composable deterministic workers; `src/verifier.rs` contains the deterministic verifier; and `src/events.rs` contains immutable sequenced events. Axum, SSE, browser code, Rig, and Serde remain intentionally absent.
+The deterministic kernel remains unchanged and tested. `src/domain.rs` contains the types and `TaskState`; `src/supervisor.rs` remains the only state mutation boundary; `src/worker.rs` contains the object-safe worker trait and composable deterministic workers; `src/verifier.rs` contains the deterministic verifier; and `src/events.rs` contains immutable sequenced events. Phase 2 adds only a transport and presentation boundary: `src/api.rs`, the Axum binary in `src/main.rs`, and locally embedded assets under `static/`. Rig remains intentionally absent.
 
-The Phase 1 runtime path is:
+The implemented runtime path is:
 
 ```mermaid
 flowchart LR
-    Plan[Ordered worker plan] --> Supervisor
-    Supervisor -->|short critical sections| Store[(Arc + Tokio Mutex)]
+    Browser[Browser] -->|HTTP command / snapshot| Axum
+    Axum --> Supervisor
     Supervisor --> WorkerTask[Spawned worker task]
     Supervisor --> DeadlineTask[Spawned deadline task]
     WorkerTask -->|typed output + token| Supervisor
     DeadlineTask -->|same token| Supervisor
     Supervisor --> Verifier[Deterministic verifier]
-    Supervisor --> History[Bounded event history]
+    Supervisor --> Store[(Authoritative store + bounded history)]
     Supervisor --> Broadcast[Broadcast observers]
+    Broadcast --> SSE
+    SSE -->|sequenced backend events| Browser
 ```
 
 The worker and deadline race is intentional. Both call supervisor methods which compare the assignment token while holding the authoritative store lock, so only one can make the decisive transition.
@@ -368,15 +370,14 @@ Rig must not:
 
 The first implementation phases use deterministic fake workers. Rig is added only after the recovery tests pass and after its feature graph, build scripts, proc macros, native dependencies, and transitive source changes are reviewed. It should be feature-gated so the core can build and test without model-provider dependencies.
 
-## Minimum backend API
+## Implemented backend API
 
-The proposed API is deliberately small:
+The API is deliberately small:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/health` | Process readiness and version; no secrets |
 | `POST` | `/api/missions/demo` | Create and start the known demo mission through normal supervisor logic |
-| `POST` | `/api/tasks` | Create a typed mission; can be deferred until the demo path works |
 | `GET` | `/api/tasks/{task_id}` | Current authoritative snapshot plus accepted result if completed |
 | `GET` | `/api/tasks/{task_id}/events` | SSE stream of backend events, with sequence IDs |
 
@@ -386,7 +387,7 @@ Worker submission is initially an internal supervisor method because workers run
 
 ## Frontend/backend communication
 
-The page loads a snapshot over HTTP, opens one SSE connection, and reduces ordered events into display state. On reconnect it refreshes the snapshot before continuing.
+The page loads an authoritative snapshot over HTTP, merges its stored event history, opens one SSE connection, and reduces events in sequence order. The SSE handler subscribes to broadcast before reading history, then removes duplicates by sequence. Browser reconnection sends the last SSE ID in `Last-Event-ID`, and the server replays only later history. If the broadcast receiver reports lag, the server emits a non-domain `resync` delivery event; the browser refetches the snapshot/history. The connection can never delay worker execution or change task state.
 
 SSE is preferred to WebSockets because communication is one-way after the run starts, browser support is native, reconnection semantics are simple, and the API does not need a bidirectional socket protocol. Polling would work but would make the two-minute story feel less immediate and introduce avoidable latency.
 
@@ -394,10 +395,10 @@ The frontend never generates domain events. It may animate the arrival of a back
 
 ## UX and demo flow
 
-The UI is one focused execution surface rather than a dashboard. The visual hierarchy is:
+The UI is one focused execution surface for Meld users and agent builders rather than a dashboard. The visual hierarchy is:
 
-1. Product promise: **Agents can fail. The work shouldn't.**
-2. One clear action: **Run recovery demo**.
+1. Product promise: **Agent work, kept authoritative.**
+2. One clear action: **Run recovery mission**.
 3. Mission status: running, recovering, verifying, or completed.
 4. A horizontal/stacked execution path: Worker A → Meld recovery → Worker B → Verifier.
 5. A human-readable event story, with technical IDs available in a secondary detail view.
@@ -405,7 +406,7 @@ The UI is one focused execution surface rather than a dashboard. The visual hier
 
 The tone is technical and assured, not a generic analytics dashboard. Status must use icon, label, and color together so it is not color-dependent. Motion should be short and functional, respect `prefers-reduced-motion`, and only acknowledge backend events.
 
-Two-minute demo script:
+The backend-controlled run is intentionally short enough to understand in one sitting:
 
 - **0:00–0:15:** State the promise and press Run.
 - **0:15–0:35:** Worker A visibly starts real work; its lease and generation are shown.
@@ -415,13 +416,13 @@ Two-minute demo script:
 - **1:40–1:55:** Worker A returns late; Meld rejects generation 1 without changing completion.
 - **1:55–2:00:** Final proof summary remains on screen.
 
-The exact timings will be tuned after the real path works, but browser code will not own them.
+Production defaults use a 2.4-second generation-1 lease, a 4.8-second controlled late return, and a 650-millisecond generation-2 controlled execution. These durations are configured in Rust. Browser code has no lifecycle timeout.
 
 ### Frontend choice
 
-Use semantic HTML, CSS custom properties, and a small browser-native JavaScript ES module served by Axum. This avoids a Node build chain and its dependency surface while still supporting a polished single-screen experience. A framework can be introduced later if the UI grows beyond this focused state reducer.
+The implementation uses semantic HTML, CSS custom properties, and browser-native JavaScript embedded into the Rust binary with `include_str!`. It has a Map/Diagram composition, an accessible command palette, keyboard focus states, 320–768 px responsive layouts, and `prefers-reduced-motion` handling. No frontend package manager, CDN, runtime font request, or separate static server is needed.
 
-## Repository structure after Phase 1
+## Repository structure after Phase 2
 
 ```text
 Meld/
@@ -431,13 +432,20 @@ Meld/
 ├── src/
 │   ├── lib.rs
 │   ├── main.rs
+│   ├── api.rs
 │   ├── domain.rs
 │   ├── events.rs
 │   ├── supervisor.rs
 │   ├── verifier.rs
 │   └── worker.rs
 ├── tests/
+│   ├── api.rs
 │   └── lifecycle.rs
+├── static/
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
+├── tokens.css
 └── docs/
     ├── ARCHITECTURE.md
     ├── BUILD_LOG.md
@@ -446,7 +454,7 @@ Meld/
     └── SUPPLY_CHAIN_SECURITY.md
 ```
 
-A single crate is enough. State transitions remain in `supervisor.rs` rather than a separate `state_machine.rs`; keeping the enum in `domain.rs` and all mutation methods together made the actual legal transitions easier to follow. Phase 2 can add `api.rs` and static assets without changing the kernel boundaries.
+A single crate remains enough. State transitions remain in `supervisor.rs`; `api.rs` maps domain snapshots and events into safe serialized response types without adding Serde derives to the domain.
 
 ## Prioritized three-day plan
 
@@ -464,6 +472,8 @@ Status: complete on 2026-08-24.
 Exit criterion: `cargo test --locked` proves the lifecycle with no frontend and no model API.
 
 ### Day 2 — expose and visualize the real system
+
+Status: complete in code and automated tests on 2026-08-24; manual browser verification recorded in `BUILD_LOG.md`.
 
 1. Add Axum endpoints and typed error responses.
 2. Add SSE with snapshot/reconnect behavior.

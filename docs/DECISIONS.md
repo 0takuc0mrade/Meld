@@ -259,3 +259,43 @@
 **At larger scale:** Use a normal clone where metadata is at `.git`; `.git-local` should not be copied or committed.
 
 **Resolution:** The standard repository now uses branch `main` with `origin` set to `https://github.com/0takuc0mrade/Meld.git`. `.git-local` is obsolete and ignored.
+
+## ADR-017 — Snapshot, history, then live SSE reconciliation
+
+**Decision:** Subscribe to broadcast before reading the snapshot/history, replay events after the client cursor, and deduplicate the combined replay/live sources by monotonically increasing sequence.
+
+**Context:** A refresh or reconnect can occur between any two domain events. Broadcast is best-effort delivery, not storage.
+
+**Why:** Subscribing first closes the history-to-live race. Duplicates are harmless and removed; missing events after subscriber lag trigger a `resync` control event and an authoritative snapshot fetch.
+
+**Tradeoffs:** History is bounded to 256 events per task, state is in memory, and the SSE forwarder uses a small per-client Tokio MPSC channel. A very old cursor receives the retained history plus the current snapshot rather than an unbounded audit log.
+
+## ADR-018 — Transport DTOs do not serialize the domain directly
+
+**Decision:** `src/api.rs` manually maps `TaskSnapshot`, `TaskState`, and `MeldEvent` into Serde response types.
+
+**Context:** Browser wording and stable wire fields are presentation concerns. Domain enums should not acquire HTTP compatibility constraints.
+
+**Why:** The API can provide human-readable messages, safe errors, timestamps, and selected technical fields while the kernel stays transport-independent.
+
+**Tradeoffs:** Mapping is explicit and repetitive. Adding a domain variant produces a compiler error in the exhaustive mapper, which is desirable.
+
+## ADR-019 — Embed local static assets in the Rust binary
+
+**Decision:** Serve `index.html`, `styles.css`, `app.js`, and `tokens.css` through explicit Axum routes backed by `include_str!`.
+
+**Context:** The current product is one execution screen and must remain easy to run and review.
+
+**Why:** One `cargo run --locked` command starts the complete product. There is no runtime filesystem lookup, CDN, Node dependency graph, or separate deployment unit.
+
+**Tradeoffs:** Asset changes require recompilation and there is no fingerprinted production caching yet. That is acceptable for the local MVP.
+
+## ADR-020 — Browser state is a projection, never an authority
+
+**Decision:** JavaScript may merge snapshots/events and animate received state, but it contains no timer that expires a lease, completes a task, or synthesizes lifecycle events.
+
+**Context:** The UI must remain correct after refresh, disconnect, background-tab throttling, or multiple tabs.
+
+**Why:** Every visible proof can be traced to a Rust-authored snapshot or `MeldEvent`. `localStorage` stores only the last task ID so refresh can request truth again.
+
+**Tradeoffs:** The client refetches the small snapshot after live events. This favors simple reconciliation over minimizing local HTTP requests.

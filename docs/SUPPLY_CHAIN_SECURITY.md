@@ -45,16 +45,15 @@ No dependency should be added solely to avoid a few clear lines of application c
 
 ## Initial dependency budget
 
-Expected direct runtime dependencies are limited to:
+Current direct runtime dependencies are limited to:
 
 - `tokio`
 - `axum`
 - `serde`
-- `serde_json`
 - `tracing`
 - `tracing-subscriber`
 - `thiserror`
-- one small stream adapter only if Axum SSE cannot be expressed cleanly without it
+- `tokio-stream`
 
 Rig and its one selected provider are a later, feature-gated review. No UUID crate is initially required; process-local typed counters are adequate for in-process IDs. No frontend packages are required.
 
@@ -108,7 +107,7 @@ Before accepting the lockfile, use Cargo metadata to enumerate packages with cus
 - note filesystem, environment, compiler, and native-tool assumptions;
 - minimize the environment variables and credentials visible to the build.
 
-Current proc macros are `thiserror-impl` and `tokio-macros`, plus their `proc-macro2`/`quote`/`syn` parsing stack. Serde is not present in Phase 1. These macros save substantial boilerplate but remain executable build inputs and are included in the lockfile review.
+Current proc macros are `thiserror-impl`, `tokio-macros`, and `serde_derive`, plus their `proc-macro2`/`quote`/`syn` parsing stack. Serde derives are restricted to HTTP/SSE DTOs; the domain is not serialization-coupled. These macros save substantial boilerplate but remain executable build inputs and are included in the lockfile review.
 
 Native TLS and C-library dependencies should be avoided unless required. Prefer Rustls-backed provider features where the selected integration supports them, after verifying the exact feature graph.
 
@@ -177,12 +176,27 @@ If a crate release, checksum, maintainer change, advisory, or unexplained lockfi
 - document unsafe-code policy and inspect unsafe transitive crates;
 - sign release checksums and retain the exact demo artifact.
 
+## Phase 2 dependency review
+
+The Phase 2 graph was resolved in `/tmp` before changing the project manifest. Two proposed conveniences were removed during review: Axum’s `query` feature and a direct `serde_json` entry. The final additions are:
+
+| Direct crate | Exact version | Enabled features | Purpose |
+| --- | --- | --- | --- |
+| `axum` | 0.8.9 | `http1`, `json`, `tokio`, `tracing`; defaults off | Router, JSON responses, SSE, HTTP/1 server |
+| `serde` | 1.0.229 | `derive` | Serialize transport DTOs |
+| `tokio-stream` | 0.1.19 | `sync`; defaults off | Adapt the bounded SSE receiver into a stream |
+| `tokio` (existing) | 1.53.1 | adds `net`, `signal` | TCP listener and Ctrl+C shutdown |
+
+Dev-only direct entries are `tower 0.5.3` with only `util` and `http-body-util 0.1.5`; both are already required transitively by Axum and are named directly only so integration tests can call the router and inspect streaming body frames.
+
+The complete lockfile contains 60 external crates, up from 17 in Phase 1: a 43-crate delta. All packages use `registry+https://github.com/rust-lang/crates.io-index` and have checksums. There are no Git dependencies, alternate registries, duplicate name/version pairs, native `links` declarations, native TLS stacks, frontend packages, or runtime downloads.
+
+New build-script-bearing packages are `httparse 1.10.1`, `libc 0.2.189`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_json 1.0.151`, and `zmij 1.0.23`; existing build scripts remain `proc-macro2`, `quote`, and `thiserror`. The only new proc macro is `serde_derive 1.0.229`. Metadata reports no native-linked package. The new build scripts were source-inspected: they emit Cargo compiler configuration, query the configured Rust/compiler/platform tool version, and in Serde’s case use Cargo’s `OUT_DIR`; no script contains a downloader or opens a network connection. `libc` has target-specific local probes such as `freebsd-version`/`emcc`, which are not used on this Linux target.
+
+No JavaScript package manager, web framework package, analytics script, remote font, CDN, or externally loaded runtime asset exists. A Content Security Policy limits scripts, styles, images, and connections to the Rust server itself.
+
 ## Current status
 
-Phase 1 has four exact direct dependencies and 17 crates.io packages in `Cargo.lock`. All registry entries have checksums. There are no Git sources, alternate registries, duplicate versions, native `links` packages, or frontend packages.
+Phase 2 has seven exact direct runtime dependencies and 60 external crates.io packages in `Cargo.lock`. The dependency delta, enabled features, build targets, proc macros, sources, duplicates, and native links were inspected before acceptance.
 
-Licenses are MIT, Apache-2.0, and Unicode-3.0 combinations. The build scripts for `proc-macro2 1.0.107`, `quote 1.0.47`, and `thiserror 2.0.20` were inspected. They query/probe the configured Rust compiler and write only beneath Cargo's output directory; none performs a download. Proc macros are `thiserror-impl 2.0.20` and `tokio-macros 2.7.2`.
-
-`cargo-audit 0.22.2` was pinned and installed under `/tmp/meld-tools`, not into the project or global toolchain. Against a RustSec database containing 1,225 advisories, it scanned the Phase 1 lockfile successfully and reported no vulnerabilities.
-
-`cargo-deny` and `cargo-vet` are not installed. Licenses, sources, duplicates, native links, features, proc macros, unsafe-code presence, and build targets were inspected directly. Automated deny/vet policy remains post-Phase-1 hardening.
+`cargo-audit 0.22.2` remains isolated under `/tmp/meld-tools`. It refreshed and loaded 1,225 RustSec advisories, scanned all 61 lockfile records, and returned no vulnerability finding. The separate crates.io yanked-version lookup timed out, so the successful recorded advisory scan was repeated explicitly with `--no-yanked`; yanked status is not claimed as verified. `cargo-deny` and `cargo-vet` are not installed. Automated deny/vet policy, criteria-based audits, vendoring, SBOM generation, and isolated reproducible release builders remain post-MVP hardening.
