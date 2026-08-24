@@ -1,0 +1,17 @@
+[package]
+name = "meld"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Deterministic reliability and supervision for AI agent systems"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+thiserror = "=2.0.20"
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt"] }
+
+[dev-dependencies]
+tokio = { version = "=1.53.1", features = ["test-util"] }
