@@ -8,10 +8,15 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "tracing"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 thiserror = "=2.0.20"
-tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "=1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = { version = "=0.1.19", default-features = false, features = ["sync"] }
 tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt"] }
 
 [dev-dependencies]
+http-body-util = "=0.1.5"
 tokio = { version = "=1.53.1", features = ["test-util"] }
+tower = { version = "=0.5.3", default-features = false, features = ["util"] }

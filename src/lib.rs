@@ -3,6 +3,7 @@
 //! Workers can execute tasks and propose results. Only [`Supervisor`] can
 //! mutate authoritative task state or accept a verified result.
 
+pub mod api;
 pub mod domain;
 pub mod events;
 pub mod supervisor;
