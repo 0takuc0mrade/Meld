@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="description" content="Meld keeps agent work authoritative through failure, reassignment, and verification.">
+    <title>Meld · Reliable agent execution</title>
+    <link rel="stylesheet" href="/tokens.css">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#execution-map">Skip to execution map</a>
+
+    <header class="site-head" aria-label="Product navigation">
+      <a class="brand" href="/" aria-label="Meld home">
+        <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M4 23V9l12 7L28 9v14"></path>
+          <path d="M4 9l12 7 12-7"></path>
+        </svg>
+        <span>Meld</span>
+      </a>
+
+      <div class="connection" id="connection" data-state="idle">
+        <span class="status-mark" aria-hidden="true"></span>
+        <span id="connectionLabel">Ready locally</span>
+      </div>
+
+      <button class="command-trigger" id="commandTrigger" type="button" aria-haspopup="dialog">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="6"></circle>
+          <path d="m16 16 4 4"></path>
+        </svg>
+        <span>Commands</span>
+        <kbd>⌘K</kbd>
+      </button>
+    </header>
+
+    <main id="mainContent">
+      <section class="orientation" aria-labelledby="page-title">
+        <div class="orientation__copy">
+          <h1 id="page-title">Agent work,<br><span>kept authoritative.</span></h1>
+          <p>Meld detects failed execution, moves the mission to a fresh generation, verifies the replacement, and refuses late work that no longer owns the task.</p>
+        </div>
+
+        <div class="orientation__action">
+          <p class="truth-note">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3 5 6v5c0 4.8 2.9 8.1 7 10 4.1-1.9 7-5.2 7-10V6l-7-3Z"></path>
+              <path d="m9 12 2 2 4-5"></path>
+            </svg>
+            The backend owns every transition.
+          </p>
+          <button class="primary-action" id="runDemo" type="button">
+            <span class="primary-action__label">Run recovery mission</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h14"></path>
+              <path d="m14 7 5 5-5 5"></path>
+            </svg>
+          </button>
+          <p class="action-help" id="actionHelp">A fresh task and event history are created for every run.</p>
+        </div>
+      </section>
+
+      <section class="mission-strip" aria-labelledby="missionTitle">
+        <div>
+          <p class="mission-strip__label">Current mission</p>
+          <h2 id="missionTitle">No mission running</h2>
+          <p id="missionObjective">Start a recovery mission to watch Meld supervise real controlled workers.</p>
+        </div>
+        <div class="mission-strip__state" id="missionState" data-state="idle">
+          <span class="status-mark" aria-hidden="true"></span>
+          <span id="missionStateLabel">Awaiting a run</span>
+        </div>
+      </section>
+
+      <section class="execution" id="execution-map" aria-labelledby="executionTitle">
+        <div class="section-head">
+          <div>
+            <h2 id="executionTitle">Execution map</h2>
+            <p>One mission, four roles, and a single authoritative generation.</p>
+          </div>
+          <div class="live-event" aria-live="polite" aria-atomic="true">
+            <span>Latest backend event</span>
+            <strong id="latestEvent">No events received</strong>
+          </div>
+        </div>
+
+        <div class="topology" id="topology" aria-label="Worker A flows through Meld recovery to Worker B and the verifier">
+          <div class="topology__track" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+
+          <article class="node node--worker-a" id="workerA" data-state="idle">
+            <div class="node__index">A</div>
+            <div class="node__body">
+              <h3>Worker A</h3>
+              <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Standing by</span></p>
+              <dl>
+                <div><dt>Generation</dt><dd>—</dd></div>
+                <div><dt>Lease</dt><dd>—</dd></div>
+              </dl>
+            </div>
+          </article>
+
+          <div class="connector connector--one" id="connectorA" data-state="idle" aria-hidden="true">
+            <span></span>
+          </div>
+
+          <article class="node node--meld" id="meldNode" data-state="idle">
+            <svg class="node__orbit" viewBox="0 0 120 120" aria-hidden="true">
+              <circle cx="60" cy="60" r="52"></circle>
+              <path d="M60 8v13M112 60H99M60 112V99M8 60h13"></path>
+            </svg>
+            <div class="node__body">
+              <svg class="node__logo" viewBox="0 0 32 32" aria-hidden="true">
+                <path d="M4 23V9l12 7L28 9v14"></path>
+                <path d="M4 9l12 7 12-7"></path>
+              </svg>
+              <h3>Meld</h3>
+              <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Watching authority</span></p>
+            </div>
+          </article>
+
+          <div class="connector connector--two" id="connectorB" data-state="idle" aria-hidden="true">
+            <span></span>
+          </div>
+
+          <article class="node node--worker-b" id="workerB" data-state="idle">
+            <div class="node__index">B</div>
+            <div class="node__body">
+              <h3>Worker B</h3>
+              <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Waiting for recovery</span></p>
+              <dl>
+                <div><dt>Generation</dt><dd>—</dd></div>
+                <div><dt>Result</dt><dd>—</dd></div>
+              </dl>
+            </div>
+          </article>
+
+          <div class="connector connector--three" id="connectorVerifier" data-state="idle" aria-hidden="true">
+            <span></span>
+          </div>
+
+          <article class="node node--verifier" id="verifier" data-state="idle">
+            <svg class="verifier-mark" viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M20 4 8 9v9c0 8 4.9 13.4 12 17 7.1-3.6 12-9 12-17V9L20 4Z"></path>
+              <path d="m14 20 4 4 8-10"></path>
+            </svg>
+            <div class="node__body">
+              <h3>Verifier</h3>
+              <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Policy ready</span></p>
+              <p class="node__note">Deterministic acceptance checks</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="evidence-grid" aria-label="Mission evidence">
+        <div class="ledger" id="event-ledger">
+          <div class="section-head section-head--compact">
+            <div>
+              <h2>Event ledger</h2>
+              <p>The readable story, ordered by backend sequence.</p>
+            </div>
+            <span class="sequence-badge" id="sequenceBadge">Sequence —</span>
+          </div>
+          <ol class="timeline" id="timeline">
+            <li class="timeline__empty" id="timelineEmpty">
+              <span class="timeline__empty-mark" aria-hidden="true"></span>
+              <div><strong>No lifecycle events yet.</strong><span>The first backend event will appear here.</span></div>
+            </li>
+          </ol>
+        </div>
+
+        <aside class="proof" id="proof" aria-labelledby="proofTitle" data-state="idle">
+          <div class="proof__head">
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M24 5 9 11v11c0 10 6 17 15 21 9-4 15-11 15-21V11L24 5Z"></path>
+              <path d="m17 24 5 5 10-12"></path>
+            </svg>
+            <div>
+              <h2 id="proofTitle">Accepted result</h2>
+              <p id="proofStatus">No result has been accepted.</p>
+            </div>
+          </div>
+
+          <ul class="proof-list" id="proofList">
+            <li data-proof="recovered"><span class="proof-mark" aria-hidden="true"></span><span>Worker failure recovered</span></li>
+            <li data-proof="reassigned"><span class="proof-mark" aria-hidden="true"></span><span>Task reassigned automatically</span></li>
+            <li data-proof="verified"><span class="proof-mark" aria-hidden="true"></span><span>Replacement verified and accepted</span></li>
+            <li data-proof="stale"><span class="proof-mark" aria-hidden="true"></span><span>Old generation rejected as stale</span></li>
+          </ul>
+
+          <blockquote class="accepted-output" id="acceptedOutput" hidden>
+            <p id="acceptedSummary"></p>
+            <footer id="acceptedMeta"></footer>
+          </blockquote>
+        </aside>
+      </section>
+
+      <details class="technical" id="technicalDetails">
+        <summary>
+          <span>Technical details</span>
+          <span>Task IDs, sequences, policy, and transport state</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"></path></svg>
+        </summary>
+        <dl class="technical__grid">
+          <div><dt>Task ID</dt><dd id="detailTask">—</dd></div>
+          <div><dt>Sequence</dt><dd id="detailSequence">—</dd></div>
+          <div><dt>Status</dt><dd id="detailStatus">idle</dd></div>
+          <div><dt>Generation</dt><dd id="detailGeneration">—</dd></div>
+          <div><dt>Current worker</dt><dd id="detailWorker">—</dd></div>
+          <div><dt>SSE transport</dt><dd id="detailTransport">not connected</dd></div>
+        </dl>
+        <div class="policy-copy">
+          <h3>Acceptance policy</h3>
+          <p id="detailPolicy">The demo policy appears after a mission starts.</p>
+        </div>
+      </details>
+    </main>
+
+    <footer class="site-foot">
+      <span>Meld · Rust-native agent reliability</span>
+      <span>Snapshots establish truth. SSE carries change.</span>
+      <a href="https://github.com/0takuc0mrade/Meld">Source on GitHub</a>
+    </footer>
+
+    <dialog class="command-palette" id="commandPalette" aria-labelledby="commandTitle">
+      <div class="command-palette__top">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+        <label id="commandTitle" for="commandSearch">Find a command</label>
+        <input id="commandSearch" type="search" autocomplete="off" placeholder="Type a command">
+        <kbd>Esc</kbd>
+      </div>
+      <div class="command-list" id="commandList" role="listbox" aria-label="Meld commands">
+        <button type="button" role="option" data-command="run" aria-selected="true"><span>Run a fresh recovery mission</span><kbd>↵</kbd></button>
+        <button type="button" role="option" data-command="events" aria-selected="false"><span>Jump to event ledger</span><kbd>↵</kbd></button>
+        <button type="button" role="option" data-command="details" aria-selected="false"><span>Toggle technical details</span><kbd>↵</kbd></button>
+      </div>
+      <p class="command-palette__hint">Use ↑ and ↓ to move · Enter to run</p>
+    </dialog>
+
+    <div class="error-toast" id="errorToast" role="alert" hidden>
+      <div>
+        <strong>Meld could not load the mission.</strong>
+        <span id="errorMessage">Check that the local server is running, then try again.</span>
+      </div>
+      <button id="dismissError" type="button" aria-label="Dismiss error">×</button>
+    </div>
+  </body>
+</html>
