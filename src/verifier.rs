@@ -36,6 +36,60 @@ impl Verifier for DeterministicVerifier {
             });
         }
 
+        if let Some(incident) = &mission.incident {
+            let analysis =
+                output
+                    .incident_analysis
+                    .as_ref()
+                    .ok_or(VerificationError::Rejected {
+                        code: VerificationCode::IncidentAnalysisMissing,
+                    })?;
+
+            if !analysis
+                .affected_component
+                .trim()
+                .eq_ignore_ascii_case(&incident.verification.expected_component)
+            {
+                return Err(VerificationError::Rejected {
+                    code: VerificationCode::AffectedComponentMismatch,
+                });
+            }
+
+            if analysis.onset.trim() != incident.verification.expected_onset {
+                return Err(VerificationError::Rejected {
+                    code: VerificationCode::IncidentOnsetMismatch,
+                });
+            }
+
+            let evidence_is_known = analysis.evidence_ids.iter().all(|candidate| {
+                incident
+                    .records
+                    .iter()
+                    .any(|record| record.id.eq_ignore_ascii_case(candidate.trim()))
+            });
+            if !evidence_is_known {
+                return Err(VerificationError::Rejected {
+                    code: VerificationCode::UnknownIncidentEvidence,
+                });
+            }
+
+            let contains_required_evidence = incident
+                .verification
+                .required_evidence_ids
+                .iter()
+                .all(|required| {
+                    analysis
+                        .evidence_ids
+                        .iter()
+                        .any(|candidate| candidate.trim().eq_ignore_ascii_case(required))
+                });
+            if !contains_required_evidence {
+                return Err(VerificationError::Rejected {
+                    code: VerificationCode::RequiredIncidentEvidenceMissing,
+                });
+            }
+        }
+
         Ok(())
     }
 }

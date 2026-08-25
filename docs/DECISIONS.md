@@ -299,3 +299,43 @@
 **Why:** Every visible proof can be traced to a Rust-authored snapshot or `MeldEvent`. `localStorage` stores only the last task ID so refresh can request truth again.
 
 **Tradeoffs:** The client refetches the small snapshot after live events. This favors simple reconciliation over minimizing local HTTP requests.
+
+## ADR-021 — Use Rig's split crates behind one Cargo feature
+
+**Decision:** Pin `rig-core` and `rig-agent` 0.42.0 directly, with default features disabled, behind Meld's `rig-worker` feature. Do not depend on the broad `rig` facade.
+
+**Context:** The facade enables a large companion integration surface. An isolated resolution of the facade produced 644 lockfile package records, while the accepted split configuration produces 194 records including Meld.
+
+**Why:** Meld needs only the classic agent/extractor runtime and one built-in provider. The deterministic kernel remains a 61-record build when the feature is disabled.
+
+**Tradeoffs:** The feature-enabled graph is still substantial: 193 external crates, 133 more than Phase 2. Each Rig upgrade requires another explicit graph and behavior review.
+
+## ADR-022 — Typed extraction is not verification
+
+**Decision:** Ask Rig to extract an `IncidentAnalysisProposal` derived with Serde and Schemars, then translate it into `WorkerOutput` and apply deterministic incident policy in `DeterministicVerifier`.
+
+**Context:** JSON shape validation can establish that fields are present and parseable, but it cannot establish that a component, timestamp, or evidence claim is supported.
+
+**Why:** The model stays a nondeterministic proposal producer. Rust checks the affected component, exact onset, known evidence IDs, and required evidence before completion.
+
+**Tradeoffs:** The current policy is deliberately narrow and mission-specific. Supporting arbitrary missions requires explicit policy design rather than relaxing authority to a model judge.
+
+## ADR-023 — One provider and an explicit Ring TLS provider
+
+**Decision:** Support OpenAI only in Phase 3, pin `reqwest 0.13.4` with `rustls-no-provider`, and pin `rustls 0.23.43` with default features disabled plus `ring`, `std`, and `tls12`.
+
+**Context:** Reqwest/Rustls defaults would select AWS-LC and introduce its native CMake build path. Rustls requires an explicit crypto provider when that default is disabled.
+
+**Why:** One fixed provider keeps the runtime and secret boundary small. Explicit Ring selection removes AWS-LC from the resolved graph and makes the native cryptography choice reviewable.
+
+**Tradeoffs:** `ring 0.17.14` still contains a custom build script and native link target, so the feature-enabled build is not pure Rust. Supporting another provider or TLS backend requires a separate decision and dependency review.
+
+## ADR-024 — Runtime mode is separate from compile-time capability
+
+**Decision:** Default to deterministic execution. Compile real workers only with `--features rig-worker`, and activate them only when `MELD_EXECUTION_MODE=rig` and a non-empty `OPENAI_API_KEY` are present.
+
+**Context:** A demo must remain runnable when credentials, provider availability, credits, or network access fail. Accidentally compiling or selecting live mode should fail clearly rather than silently weakening behavior.
+
+**Why:** Both modes use the same API, supervisor, deadlines, generations, verifier, and events. Only the `Worker` implementation changes. Provider requests have a server timeout, and timing configuration is validated so Worker B can finish before Worker A returns stale.
+
+**Tradeoffs:** There are two build variants and operational configuration must be explicit. Offline tests mock the narrow analyzer boundary, so a separate credentialed smoke is still required to prove provider access.

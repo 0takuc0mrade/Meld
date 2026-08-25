@@ -16,10 +16,11 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::domain::{
-    AcceptanceCriteria, Assignment, FailureReason, Mission, TaskId, TaskState, TerminalFailure,
-    WorkerOutput,
+    Assignment, FailureReason, Mission, TaskId, TaskState, TerminalFailure, WorkerOutput,
 };
 use crate::events::{EventKind, MeldEvent};
+#[cfg(feature = "rig-worker")]
+use crate::rig_worker::RigDemoConfig;
 use crate::supervisor::{Supervisor, SupervisorError, TaskSnapshot};
 use crate::worker::{ControlledDelayWorker, SuccessfulWorker, Worker};
 
@@ -46,6 +47,15 @@ impl Default for DemoConfig {
 pub struct ApiState {
     supervisor: Arc<Supervisor>,
     demo: DemoConfig,
+    demo_mode: DemoMode,
+}
+
+#[derive(Clone, Default)]
+enum DemoMode {
+    #[default]
+    Deterministic,
+    #[cfg(feature = "rig-worker")]
+    Rig(RigDemoConfig),
 }
 
 impl ApiState {
@@ -53,15 +63,52 @@ impl ApiState {
         Self {
             supervisor,
             demo: DemoConfig::default(),
+            demo_mode: DemoMode::default(),
         }
     }
 
     pub fn with_demo_config(supervisor: Arc<Supervisor>, demo: DemoConfig) -> Self {
-        Self { supervisor, demo }
+        Self {
+            supervisor,
+            demo,
+            demo_mode: DemoMode::default(),
+        }
     }
 
     pub fn supervisor(&self) -> &Arc<Supervisor> {
         &self.supervisor
+    }
+
+    #[cfg(feature = "rig-worker")]
+    pub fn with_rig_demo(mut self, config: RigDemoConfig) -> Self {
+        self.demo.lease_duration = config.assignment_lease();
+        self.demo_mode = DemoMode::Rig(config);
+        self
+    }
+
+    fn demo_scenario(&self) -> (Mission, Vec<Arc<dyn Worker>>) {
+        let mission = Mission::incident_fixture();
+        let workers: Vec<Arc<dyn Worker>> = match &self.demo_mode {
+            DemoMode::Deterministic => vec![
+                Arc::new(ControlledDelayWorker::new(
+                    SuccessfulWorker::new(
+                        "Worker A",
+                        WorkerOutput::accepted_incident_fixture("Worker A"),
+                    ),
+                    self.demo.first_worker_delay,
+                )),
+                Arc::new(ControlledDelayWorker::new(
+                    SuccessfulWorker::new(
+                        "Worker B",
+                        WorkerOutput::accepted_incident_fixture("Worker B"),
+                    ),
+                    self.demo.second_worker_delay,
+                )),
+            ],
+            #[cfg(feature = "rig-worker")]
+            DemoMode::Rig(config) => config.workers(),
+        };
+        (mission, workers)
     }
 }
 
@@ -92,7 +139,7 @@ async fn health() -> Json<HealthResponse> {
         status: "ready",
         service: "meld",
         version: env!("CARGO_PKG_VERSION"),
-        phase: 2,
+        phase: 3,
     })
 }
 
@@ -105,16 +152,7 @@ struct StartDemoResponse {
 async fn start_demo(
     State(state): State<ApiState>,
 ) -> Result<(StatusCode, Json<StartDemoResponse>), ApiError> {
-    let mission = Mission {
-        title: "Recover a reliability brief".to_owned(),
-        objective: "Explain how assignment generations keep late agent work from replacing the verified result."
-            .to_owned(),
-        acceptance: AcceptanceCriteria {
-            minimum_summary_chars: 40,
-            required_terms: vec!["generation".to_owned(), "stale".to_owned()],
-            minimum_evidence_items: 1,
-        },
-    };
+    let (mission, workers) = state.demo_scenario();
     let task_id = state
         .supervisor
         .create_task(mission)
@@ -130,17 +168,6 @@ async fn start_demo(
     let supervisor = Arc::clone(&state.supervisor);
     let config = state.demo;
     tokio::spawn(async move {
-        let workers: Vec<Arc<dyn Worker>> = vec![
-            Arc::new(ControlledDelayWorker::new(
-                SuccessfulWorker::new("Worker A", WorkerOutput::accepted_fixture("Worker A")),
-                config.first_worker_delay,
-            )),
-            Arc::new(ControlledDelayWorker::new(
-                SuccessfulWorker::new("Worker B", WorkerOutput::accepted_fixture("Worker B")),
-                config.second_worker_delay,
-            )),
-        ];
-
         if let Err(error) = supervisor
             .run_task(task_id, workers, config.lease_duration)
             .await

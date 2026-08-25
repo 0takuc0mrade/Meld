@@ -344,3 +344,129 @@ The in-memory MVP cannot resume tasks after process death. Graceful shutdown imp
 **What:** The listener stops accepting new connections and lets active HTTP work wind down.
 
 **Limit:** Detached controlled workers are still protected by generation checks, but Phase 2 does not yet maintain a global `JoinSet` to drain them. Process exit still loses the in-memory store.
+
+## Cargo features as an optional trust boundary
+
+**Where:** The `rig-worker` feature in `Cargo.toml` and `#[cfg(feature = "rig-worker")]` in `lib.rs`, `api.rs`, and `main.rs`.
+
+**What:** A Cargo feature conditionally activates dependencies and Rust items. With the feature off, Rig, Reqwest, Rustls, and Schemars are not part of Meld's compiled dependency graph.
+
+**Problem solved:** The deterministic reliability kernel can build and run without provider code, provider credentials, or the much larger model-integration supply chain.
+
+```rust
+#[cfg(feature = "rig-worker")]
+pub mod rig_worker;
+```
+
+This is not a sandbox. Enabling the feature gives those crates normal build/runtime privileges. It is useful because the trust decision is explicit and both variants are tested.
+
+## A second object-safe async trait boundary
+
+**Where:** `IncidentAnalyzer` inside `src/rig_worker.rs`.
+
+**What:** `RigWorker` depends on a very small behavior—turn a prompt into a typed proposal—rather than depending directly on an OpenAI client throughout the application. Like `Worker`, it returns a boxed `Future` so tests can use a trait object without adding `async-trait`.
+
+```rust
+type AnalysisFuture = Pin<Box<dyn Future<Output = Result<Proposal, AnalysisError>> + Send>>;
+
+trait IncidentAnalyzer: Send + Sync {
+    fn analyze(&self, prompt: String) -> AnalysisFuture;
+}
+```
+
+**Problem solved:** Offline tests can substitute success, invalid output, provider failure, or a future that never completes while exercising the real `RigWorker` timeout/error mapping. The supervisor still sees only its original `Worker` trait.
+
+**Ownership connection:** The prompt, API key clone, and model name are owned by the returned `'static` future. No request-scoped borrow can outlive its caller.
+
+## Generic wrapper composition with a real worker
+
+**Where:** `ControlledDelayWorker<W>` in `src/worker.rs` and `RigDemoConfig::workers` in `src/rig_worker.rs`.
+
+**What:** The wrapper is generic over any `W: Worker`. Because `RigWorker` implements `Worker`, the compiler can instantiate `ControlledDelayWorker<RigWorker>` without either type knowing about the other.
+
+```rust
+let real = RigWorker::openai(/* ... */);
+let late = ControlledDelayWorker::new(real, agent_a_delay);
+```
+
+Its `execute` method awaits the inner worker first, stores that real `Result`, sleeps, and then returns the stored value. Therefore Worker A's late value is the genuine typed provider result, not a fabricated timeout response.
+
+**Problem solved:** Execution, fault injection, and recovery stay separate. `RigWorker` means “perform agent work,” the wrapper means “delay delivery,” and the supervisor means “expire authority and recover.” The same wrapper already worked for deterministic workers, so no demo-only state-machine branch was needed.
+
+## What lease expiry does to the worker future
+
+**Where:** `Supervisor::run_task` races the spawned worker task against the assignment deadline.
+
+When the lease task wins, Meld transitions the current assignment to recovery and drops the worker task's `JoinHandle`. Tokio dropping a `JoinHandle` detaches the task; it does not drop or cancel the worker future. In the current live scenario, that detached task is sleeping inside `ControlledDelayWorker` with an already-produced model result. It wakes later and submits generation 1 through the normal path.
+
+If an unwrapped provider future were still executing at lease expiry, the same detached task could continue until Meld's separate provider timeout or provider completion. Even successful work cannot regain authority: submission carries the original token, and the supervisor compares its generation with the current assignment under the state mutex.
+
+This is why cancellation and correctness are different concerns. Aborting a local future can save resources, but remote work may already be in flight and cancellation may fail. Generation checks make every late outcome harmless regardless of whether cancellation worked.
+
+## Serde and Schemars for structured model output
+
+**Where:** `IncidentAnalysisProposal` derives `Deserialize`, `Serialize`, and `JsonSchema`.
+
+**What:** Serde defines how provider JSON becomes a Rust value. Schemars derives a JSON Schema that Rig exposes through its typed extractor/tool boundary.
+
+**Problem solved:** Model text does not flow into the verifier as an unparsed blob. Missing fields, wrong JSON types, or malformed content become `AnalysisError::InvalidOutput`.
+
+**Important limit:** A schema verifies structure, not truth. A syntactically valid proposal can still name the wrong component, use an unsupported onset, or cite an invented evidence ID. `DeterministicVerifier` separately checks those claims against mission policy.
+
+## Converting nondeterministic proposals into deterministic evidence
+
+**Where:** `IncidentAnalysisProposal::into_worker_output` and the incident checks in `DeterministicVerifier`.
+
+**What:** The adapter preserves the agent's proposed component, timestamp, and record IDs in a typed `IncidentAnalysis`. It also resolves known IDs into readable evidence strings. The verifier compares the typed fields against expected policy and the mission's record set.
+
+**Problem solved:** Model output can vary in wording while acceptance remains reproducible. Two summaries with different prose receive the same decision if their checked claims are equal.
+
+**Without it:** A model could sound convincing, cite nonexistent records, and effectively authorize its own completion.
+
+## `tokio::time::timeout` around external work
+
+**Where:** `RigWorker::execute` wraps `analyzer.analyze(prompt)`.
+
+**What:** `timeout(duration, future)` waits for the future only until a monotonic deadline. If it does not finish, Tokio drops that future and returns `Elapsed`.
+
+**Problem solved:** A provider connection cannot hold one assignment forever. Meld turns the elapsed deadline into a normal `WorkerError`, allowing the existing supervisor recovery path to issue a fresh generation.
+
+```rust
+match tokio::time::timeout(limit, analyzer.analyze(prompt)).await {
+    Ok(Ok(proposal)) => use_proposal(proposal),
+    Ok(Err(error)) => classify(error),
+    Err(_) => provider_timed_out(),
+}
+```
+
+This provider timeout is distinct from the assignment lease. Configuration requires the provider timeout to be shorter, so a single request has a chance to fail cleanly before the supervisor's broader lease expires. Token checks remain necessary because timeout/cancellation cannot prove a remote service stopped its work.
+
+## Error classification at an untrusted boundary
+
+**Where:** `AnalysisError`, `classify_extraction_error`, and `WorkerError::Execution` mapping.
+
+**What:** Rig errors are collapsed into safe operational categories: provider failure or invalid structured output. Timeout is handled separately.
+
+**Problem solved:** The supervisor gets stable failure semantics and logs receive a safe category without leaking an authorization header, prompt, raw response, or provider debug payload.
+
+**Tradeoff:** Collapsing errors loses diagnostic detail. A production system can retain redacted internal causes in a protected observability channel while keeping API/event messages stable and non-secret.
+
+## `Once` and process-wide crypto-provider initialization
+
+**Where:** `INSTALL_RING_PROVIDER: Once` and `install_ring_crypto_provider`.
+
+**What:** Rustls needs one process-wide cryptography provider. `Once::call_once` makes initialization race-safe when two workers begin concurrently.
+
+**Problem solved:** Both Rig workers can create clients without racing to install different global providers. Meld compiles Rustls with default providers disabled and deliberately installs Ring.
+
+**Supply-chain connection:** Explicit feature selection removed AWS-LC and its CMake path from the graph, but Ring still has a native build/link boundary. Cargo features reduce and clarify risk; they do not make cryptographic dependencies risk-free.
+
+## Configuration parsing as invariant construction
+
+**Where:** `RigDemoConfig::from_env` and `duration_from_env`.
+
+**What:** Environment strings are parsed once into typed `Duration` values and validated before the HTTP server starts. Later code receives a configuration whose timing relationships are already known to hold.
+
+**Problem solved:** Real-agent mode cannot start with a missing key, zero/invalid duration, provider timeout longer than the assignment lease, or Worker A delay too short to demonstrate a stale return after generation 2.
+
+This follows a common Rust pattern: parse untrusted strings at the boundary, return a typed error for invalid input, and let the rest of the program operate on validated types.

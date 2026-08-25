@@ -9,9 +9,34 @@ Meld keeps work running when an agent fails and verifies the work before accepti
 
 A worker cannot set a task to `Completed`. It can only submit a typed candidate result together with the assignment token it was given. The supervisor decides whether that token is current, whether the transition is allowed, and whether verification passes.
 
-## Phase 2 implementation status
+## Phase 3 implementation status
 
-The deterministic kernel remains unchanged and tested. `src/domain.rs` contains the types and `TaskState`; `src/supervisor.rs` remains the only state mutation boundary; `src/worker.rs` contains the object-safe worker trait and composable deterministic workers; `src/verifier.rs` contains the deterministic verifier; and `src/events.rs` contains immutable sequenced events. Phase 2 adds only a transport and presentation boundary: `src/api.rs`, the Axum binary in `src/main.rs`, and locally embedded assets under `static/`. Rig remains intentionally absent.
+Phase 3 adds a real-agent boundary without moving authority out of Rust. `src/rig_worker.rs` implements the existing `Worker` trait with Rig 0.42.0 and one OpenAI provider. The adapter asks for a typed `IncidentAnalysisProposal`; it does not receive state-store access, choose generations, verify its own answer, or publish authoritative events.
+
+The browser API and frontend assets remain unchanged. `POST /api/missions/demo` chooses workers from configuration and then enters the same `Supervisor::run_task` path in both modes:
+
+```mermaid
+flowchart LR
+    Config{Execution mode} -->|deterministic| Fake[Controlled deterministic workers]
+    Config -->|rig feature + rig mode| Rig[RigWorker / OpenAI]
+    Fake --> Supervisor
+    Rig --> Supervisor
+    Supervisor --> Tokens[Assignment token checks]
+    Supervisor --> Verify[Deterministic incident policy]
+    Verify --> State[(Authoritative state + events)]
+```
+
+The incident mission supplies timestamped component records. An agent proposes the affected component, onset, supporting record IDs, and summary. Rust then requires the expected component and onset, rejects unknown evidence IDs, and requires the policy's evidence set. Structured extraction makes output parseable; deterministic verification decides whether it is acceptable.
+
+In real-agent mode, Worker A calls the model normally and then a generic `ControlledDelayWorker` withholds the completed result. Its 30-second assignment expires, Worker B runs generation 2 through the same Rig adapter, and its verified result becomes authoritative. Worker A later submits its genuine but stale generation-1 proposal through the normal submission method and is rejected by token generation.
+
+Provider calls have a 20-second server-side timeout. The default 55-second post-result delay is greater than the 30-second lease plus one provider timeout, so generation 2 has a bounded opportunity to complete first. Configuration validation rejects timing values that would break this ordering.
+
+The Phase 2 transport remains the current transport implementation. `src/domain.rs` contains the types and `TaskState`; `src/supervisor.rs` remains the only state mutation boundary; `src/worker.rs` contains the object-safe worker trait and composable workers; `src/verifier.rs` contains the deterministic verifier; and `src/events.rs` contains immutable sequenced events.
+
+## Phase 2 transport foundation
+
+Phase 2 added only a transport and presentation boundary: `src/api.rs`, the Axum binary in `src/main.rs`, and locally embedded assets under `static/`. It intentionally introduced no model provider; Phase 3 supplies the feature-gated adapter described above.
 
 The implemented runtime path is:
 
@@ -358,7 +383,7 @@ The in-memory event history is bounded per task to prevent unlimited growth.
 
 ## Where Rig belongs
 
-Rig belongs in `workers/rig.rs` as one implementation of `Worker`. It translates a typed `WorkRequest` into a single provider call and translates the response back into `WorkerOutput`.
+Rig is implemented in `src/rig_worker.rs` as one implementation of `Worker`. It translates a typed `WorkRequest` into one provider call and translates the extracted proposal back into `WorkerOutput`.
 
 Rig must not:
 
@@ -368,7 +393,7 @@ Rig must not:
 - directly publish authoritative events;
 - receive store or supervisor mutation authority.
 
-The first implementation phases use deterministic fake workers. Rig is added only after the recovery tests pass and after its feature graph, build scripts, proc macros, native dependencies, and transitive source changes are reviewed. It should be feature-gated so the core can build and test without model-provider dependencies.
+The adapter is behind the `rig-worker` Cargo feature, so the core still builds and tests without provider dependencies. Its feature graph, build scripts, proc macros, native links, duplicate versions, and sources were reviewed before acceptance; exact findings are in `SUPPLY_CHAIN_SECURITY.md`.
 
 ## Implemented backend API
 
@@ -422,10 +447,12 @@ Production defaults use a 2.4-second generation-1 lease, a 4.8-second controlled
 
 The implementation uses semantic HTML, CSS custom properties, and browser-native JavaScript embedded into the Rust binary with `include_str!`. It has a Map/Diagram composition, an accessible command palette, keyboard focus states, 320–768 px responsive layouts, and `prefers-reduced-motion` handling. No frontend package manager, CDN, runtime font request, or separate static server is needed.
 
-## Repository structure after Phase 2
+## Repository structure after Phase 3
 
 ```text
 Meld/
+├── README.md
+├── .env.example
 ├── Cargo.toml
 ├── Cargo.lock
 ├── rust-toolchain.toml
@@ -433,6 +460,7 @@ Meld/
 │   ├── lib.rs
 │   ├── main.rs
 │   ├── api.rs
+│   ├── rig_worker.rs
 │   ├── domain.rs
 │   ├── events.rs
 │   ├── supervisor.rs
@@ -440,7 +468,9 @@ Meld/
 │   └── worker.rs
 ├── tests/
 │   ├── api.rs
-│   └── lifecycle.rs
+│   ├── incident_verification.rs
+│   ├── lifecycle.rs
+│   └── rig_worker.rs
 ├── static/
 │   ├── index.html
 │   ├── styles.css
@@ -454,7 +484,7 @@ Meld/
     └── SUPPLY_CHAIN_SECURITY.md
 ```
 
-A single crate remains enough. State transitions remain in `supervisor.rs`; `api.rs` maps domain snapshots and events into safe serialized response types without adding Serde derives to the domain.
+A single crate remains enough. State transitions remain in `supervisor.rs`; `api.rs` maps domain snapshots and events into safe serialized response types. Serde and Schemars derives are used for the narrow Rig proposal schema, not for authoritative state transitions.
 
 ## Prioritized three-day plan
 
@@ -485,6 +515,8 @@ Status: complete in code and automated tests on 2026-08-24; manual browser verif
 Exit criterion: a browser renders only backend state/events and the stale result is visibly rejected.
 
 ### Day 3 — integration, security, and rehearsal
+
+Status: Phase 3 integration, fallback, offline tests, and dependency review are complete in code on 2026-08-25. A live provider smoke remains unverified because the secure OpenAI Platform key-creation connector did not expose its creation action after authentication; no plaintext fallback was used.
 
 1. Review the Rig dependency delta and add the adapter only if it is stable enough for the demo.
 2. Keep a deterministic local worker mode as an offline fallback that exercises identical supervisor logic.

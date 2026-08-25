@@ -66,10 +66,32 @@ pub struct AcceptanceCriteria {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncidentRecord {
+    pub id: String,
+    pub observed_at: String,
+    pub component: String,
+    pub observation: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncidentVerificationPolicy {
+    pub expected_component: String,
+    pub expected_onset: String,
+    pub required_evidence_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncidentCase {
+    pub records: Vec<IncidentRecord>,
+    pub verification: IncidentVerificationPolicy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Mission {
     pub title: String,
     pub objective: String,
     pub acceptance: AcceptanceCriteria,
+    pub incident: Option<IncidentCase>,
 }
 
 impl Mission {
@@ -82,6 +104,57 @@ impl Mission {
                 required_terms: vec!["generation".to_owned(), "stale".to_owned()],
                 minimum_evidence_items: 1,
             },
+            incident: None,
+        }
+    }
+
+    pub fn incident_fixture() -> Self {
+        Self {
+            title: "Diagnose a checkout incident".to_owned(),
+            objective: "Identify the component where the incident began, its earliest supported onset, and the records that prove the conclusion."
+                .to_owned(),
+            acceptance: AcceptanceCriteria {
+                minimum_summary_chars: 48,
+                required_terms: vec!["payments-api".to_owned()],
+                minimum_evidence_items: 2,
+            },
+            incident: Some(IncidentCase {
+                records: vec![
+                    IncidentRecord {
+                        id: "EV-101".to_owned(),
+                        observed_at: "2026-08-24T10:01:00Z".to_owned(),
+                        component: "payments-api".to_owned(),
+                        observation: "Request latency rose from 180 ms to 1.4 s immediately after a connection-pool saturation warning."
+                            .to_owned(),
+                    },
+                    IncidentRecord {
+                        id: "EV-102".to_owned(),
+                        observed_at: "2026-08-24T10:02:00Z".to_owned(),
+                        component: "payments-api".to_owned(),
+                        observation: "Gateway timeout errors increased to 31% while the connection pool remained exhausted."
+                            .to_owned(),
+                    },
+                    IncidentRecord {
+                        id: "EV-103".to_owned(),
+                        observed_at: "2026-08-24T10:03:00Z".to_owned(),
+                        component: "checkout-ui".to_owned(),
+                        observation: "Checkout failures rose downstream after payment requests began timing out."
+                            .to_owned(),
+                    },
+                    IncidentRecord {
+                        id: "EV-104".to_owned(),
+                        observed_at: "2026-08-24T10:04:00Z".to_owned(),
+                        component: "catalog-api".to_owned(),
+                        observation: "Catalog latency and error rate remained within the normal range."
+                            .to_owned(),
+                    },
+                ],
+                verification: IncidentVerificationPolicy {
+                    expected_component: "payments-api".to_owned(),
+                    expected_onset: "2026-08-24T10:01:00Z".to_owned(),
+                    required_evidence_ids: vec!["EV-101".to_owned(), "EV-102".to_owned()],
+                },
+            }),
         }
     }
 }
@@ -117,6 +190,14 @@ pub struct AssignmentToken {
 pub struct WorkerOutput {
     pub summary: String,
     pub evidence: Vec<String>,
+    pub incident_analysis: Option<IncidentAnalysis>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncidentAnalysis {
+    pub affected_component: String,
+    pub onset: String,
+    pub evidence_ids: Vec<String>,
 }
 
 impl WorkerOutput {
@@ -126,6 +207,24 @@ impl WorkerOutput {
                 "{label}: a new generation makes an expired worker result stale and non-authoritative."
             ),
             evidence: vec!["The assignment token is checked under the state lock.".to_owned()],
+            incident_analysis: None,
+        }
+    }
+
+    pub fn accepted_incident_fixture(label: &str) -> Self {
+        Self {
+            summary: format!(
+                "{label} found that payments-api began the checkout incident at 2026-08-24T10:01:00Z."
+            ),
+            evidence: vec![
+                "EV-101: latency rose with connection-pool saturation.".to_owned(),
+                "EV-102: gateway timeouts rose while the pool stayed exhausted.".to_owned(),
+            ],
+            incident_analysis: Some(IncidentAnalysis {
+                affected_component: "payments-api".to_owned(),
+                onset: "2026-08-24T10:01:00Z".to_owned(),
+                evidence_ids: vec!["EV-101".to_owned(), "EV-102".to_owned()],
+            }),
         }
     }
 }
@@ -156,6 +255,11 @@ pub enum VerificationCode {
     SummaryTooShort,
     RequiredTermMissing,
     InsufficientEvidence,
+    IncidentAnalysisMissing,
+    AffectedComponentMismatch,
+    IncidentOnsetMismatch,
+    UnknownIncidentEvidence,
+    RequiredIncidentEvidenceMissing,
 }
 
 impl fmt::Display for VerificationCode {
@@ -164,6 +268,11 @@ impl fmt::Display for VerificationCode {
             Self::SummaryTooShort => "summary_too_short",
             Self::RequiredTermMissing => "required_term_missing",
             Self::InsufficientEvidence => "insufficient_evidence",
+            Self::IncidentAnalysisMissing => "incident_analysis_missing",
+            Self::AffectedComponentMismatch => "affected_component_mismatch",
+            Self::IncidentOnsetMismatch => "incident_onset_mismatch",
+            Self::UnknownIncidentEvidence => "unknown_incident_evidence",
+            Self::RequiredIncidentEvidenceMissing => "required_incident_evidence_missing",
         };
         formatter.write_str(value)
     }

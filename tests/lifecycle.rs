@@ -19,6 +19,7 @@ fn invalid_output() -> WorkerOutput {
     WorkerOutput {
         summary: "This answer discusses generation but omits a required concept.".to_owned(),
         evidence: vec!["It is structurally valid but semantically unacceptable.".to_owned()],
+        incident_analysis: None,
     }
 }
 

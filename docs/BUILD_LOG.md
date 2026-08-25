@@ -278,3 +278,70 @@ Recovery itself is a deliberately short authoritative transition: `run_task` ass
 ### Phase boundary
 
 Rig and real model providers remain absent. Phase 2 stops after the real backend-controlled browser sequence is validated.
+
+## 2026-08-25 — Phase 3: real Rig workers behind deterministic authority
+
+### Architecture fit
+
+The existing abstractions did not need a rewrite. `RigWorker` implements the Phase 1 `Worker` trait and therefore enters the same `Supervisor::run_task`, assignment-token, deadline, verification, completion, and stale-submission methods as deterministic workers. The existing generic `ControlledDelayWorker<W>` wraps Worker A after its real execution and withholds the completed result; fault injection is not part of Rig or the supervisor.
+
+The Phase 2 endpoint paths, JSON field shapes, event kinds, SSE reconciliation, and frontend source files are unchanged. Health now reports phase 3 in its existing numeric field, and the demo mission data is the incident fixture required for meaningful verification.
+
+### Demo mission and deterministic verification
+
+The fixed mission provides four timestamped checkout incident records. Agents must identify the initiating component, earliest supported onset, evidence record IDs, and a concise summary. Rig extracts those fields into `IncidentAnalysisProposal` using Serde/Schemars.
+
+Structured extraction is not treated as authority. `DeterministicVerifier` requires `payments-api`, onset `2026-08-24T10:01:00Z`, known evidence IDs, and both required records `EV-101`/`EV-102`. Wrong component, unsupported onset, unknown evidence, missing required evidence, or missing incident analysis is rejected through the normal verification recovery path.
+
+### Rig and provider integration
+
+Pinned `rig-core 0.42.0` and `rig-agent 0.42.0` are behind the `rig-worker` feature. The adapter uses one provider—OpenAI—and defaults to `gpt-5-mini`. Its typed extractor has zero model retries and a 400-token maximum. Meld adds its own request timeout and maps provider failure, invalid structured output, or timeout into safe `WorkerError::Execution` values.
+
+Tracing records the agent boundary with provider, model, task ID, assignment ID, generation, and worker ID. It does not record the API key, authorization header, prompt, full response, or environment.
+
+The runtime defaults to deterministic mode. `MELD_EXECUTION_MODE=rig` additionally requires a feature-enabled binary and a non-empty `OPENAI_API_KEY`. The default real timing is a 30-second Meld lease, 20-second provider timeout, and 55-second post-result delay for Worker A. Startup validation rejects timing values that do not leave Worker B enough bounded time to complete before Worker A returns.
+
+### Credentialed smoke status
+
+The environment had no `OPENAI_API_KEY`. The user authorized secure key creation and approved `/home/peterjune/Meld/.env.local`, but the authenticated OpenAI Platform connector stopped exposing the key-creation action after authentication. No key or partial env file was created, no plaintext key was requested or handled, and no provider credits were spent.
+
+Consequently, the real OpenAI smoke and full credentialed recovery run were not performed. The code path is compiled and tested through a narrow mocked `IncidentAnalyzer`, but the report does not claim that provider access, model entitlement, credits, or live structured extraction succeeded. `.env.example` and the README document the explicit live run once a scoped key is available.
+
+### Tests and failure coverage
+
+All existing Phase 1/2 tests remain green. Four incident-policy tests cover acceptance and meaningful rejection. Six feature-gated boundary tests cover valid typed conversion, malformed output, provider failure, provider timeout, generic controlled delay, and a complete two-Rig-worker supervisor run in which generation 2 completes and generation 1 is rejected stale. Tokio's paused clock keeps tests offline, fast, and credit-free.
+
+The mocked complete-recovery test proves control-plane composition but does not make Worker A's late result genuinely AI-generated. In a live run, the wrapper's order is execution first and delay second, so the eventual late result would be genuine provider output.
+
+Final verification passed:
+
+- `cargo fmt --all -- --check`;
+- offline all-target/all-feature Clippy with `-D warnings`;
+- offline `cargo test --locked`: 20 integration tests passed (7 API, 4 incident verification, 9 lifecycle);
+- offline `cargo test --features rig-worker --locked`: the same 20 plus 6 Rig-boundary tests passed;
+- feature-disabled `MELD_EXECUTION_MODE=rig` failed clearly because the build capability was absent;
+- feature-enabled Rig mode without a key failed clearly with `OPENAI_API_KEY is required when MELD_EXECUTION_MODE=rig`;
+- the deterministic Axum binary was started and exercised over HTTP: health reported phase 3, the unchanged demo POST returned `202`, generation 2 completed after deterministic verification, and the final snapshot contained all 13 lifecycle events including generation-1 stale rejection;
+- a Git diff guard confirmed no change under `static/` or `tokens.css`.
+
+### Supply-chain review
+
+The broad `rig` facade was rejected after an isolated 644-record resolution. The accepted split/default-off graph produces 194 lockfile records including Meld: 193 external crates, up from 60 in Phase 2, a 133-package expansion. All sources are checksum-locked crates.io packages; there are no Git or alternate-registry sources.
+
+Reqwest/Rustls defaults would have introduced AWS-LC and CMake. Meld pins Reqwest's `rustls-no-provider` and explicitly installs Ring through Rustls, removing AWS-LC from the graph while documenting Ring as an active native build/link boundary. Metadata build targets, proc macros, links, duplicate versions, licenses, and sources are recorded in `SUPPLY_CHAIN_SECURITY.md`.
+
+Pinned `cargo-audit 0.22.2` under `/tmp` loaded 1,226 RustSec advisories and found no vulnerability across the 194-record lockfile in a cached `--no-yanked` scan. Yanked status is not claimed.
+
+### Documentation and files
+
+Added `README.md`, `.env.example`, `src/rig_worker.rs`, `tests/rig_worker.rs`, and `tests/incident_verification.rs`. Updated the manifest/lockfile, domain incident types, deterministic verifier, API mode wiring, binary configuration, existing tests, and all five engineering documents.
+
+`docs/RUST_LEARNING.md` now explains the exact Phase 3 Rust mechanisms: Cargo features, the second object-safe async trait boundary, owned provider futures, Serde/Schemars extraction, proposal-versus-verification, Tokio provider timeout, safe error mapping, process-wide crypto initialization, and validated environment configuration.
+
+### Remaining limitations
+
+- A scoped OpenAI key and network/credit availability are still required for the controlled live smoke.
+- The feature-enabled supply chain is much larger than the deterministic fallback.
+- Provider rate limits and quota errors are grouped into the safe provider-failure category rather than surfaced with fine-grained retry policy.
+- State remains in memory and a process restart loses the mission.
+- The application reads environment variables directly; it does not automatically load `.env.local`.

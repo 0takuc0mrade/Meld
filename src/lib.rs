@@ -6,6 +6,8 @@
 pub mod api;
 pub mod domain;
 pub mod events;
+#[cfg(feature = "rig-worker")]
+pub mod rig_worker;
 pub mod supervisor;
 pub mod verifier;
 pub mod worker;

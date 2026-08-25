@@ -195,8 +195,34 @@ New build-script-bearing packages are `httparse 1.10.1`, `libc 0.2.189`, `serde 
 
 No JavaScript package manager, web framework package, analytics script, remote font, CDN, or externally loaded runtime asset exists. A Content Security Policy limits scripts, styles, images, and connections to the Rust server itself.
 
+## Phase 3 Rig dependency review
+
+The model integration is behind `rig-worker`; the default deterministic build retains the Phase 2 graph. The accepted direct additions are exact versions with defaults disabled:
+
+| Direct crate | Exact version | Enabled features | Purpose |
+| --- | --- | --- | --- |
+| `rig-core` | 0.42.0 | defaults off | OpenAI provider/client types used by the adapter |
+| `rig-agent` | 0.42.0 | defaults off | Typed extractor/agent runtime |
+| `reqwest` | 0.13.4 | `rustls-no-provider` | Steer Rig's HTTP graph away from its default crypto provider |
+| `rustls` | 0.23.43 | `ring`, `std`, `tls12`; defaults off | Explicit process-wide TLS crypto provider |
+| `schemars` | 1.2.2 | `derive`, `std`; defaults off | JSON Schema for structured incident proposals |
+
+An isolated resolution of the broad `rig 0.42.0` facade produced 644 lockfile package records and was rejected. The official split crates provide the required extractor/provider boundary with a materially smaller graph. A default Rustls resolution also introduced AWS-LC and CMake; explicit `rustls-no-provider` plus Ring removed `aws-lc-rs`/`aws-lc-sys` from Meld's resolved graph.
+
+The final feature-enabled `Cargo.lock` contains 194 records: Meld plus 193 checksum-locked crates.io packages. Phase 2 contained Meld plus 60 external packages, so real-agent support adds 133 external packages. There are no Git sources or alternate registries.
+
+Cargo metadata reports two duplicate-name families: `syn` 2.0.119/3.0.4 and `windows-sys` 0.52.0/0.61.2. It reports two `links` declarations across the cross-platform lock graph: `ring 0.17.14` (`ring_core_0_17_14_`) and target-specific `wasm-bindgen-shared 0.2.127` (`wasm_bindgen`). Ring is the active native cryptography/build boundary on the Linux demo target; AWS-LC is absent.
+
+Custom build targets in the complete cross-platform metadata are: `generic-array`, `httparse`, `icu_normalizer_data`, `icu_properties_data`, `jni`, `jni-macros`, `libc`, `mime_guess`, `num-traits`, `proc-macro2`, `quote`, `ref-cast`, `ring`, `rustls`, `rustversion`, `serde`, `serde_core`, `serde_json`, `thiserror`, `wasm-bindgen`, `wasm-bindgen-shared`, the target-specific `windows_* 0.52.6` packages, and `zmij`. A source-pattern inspection found no network client, socket, curl, or wget use in those build targets. URL hits were comments/licenses; command execution is local compiler/version/tool probing, target-specific local Git/NASM use, and Ring's compiler/archiver/assembler path. This reduces one class of surprise but is not proof that build code is benign.
+
+Proc-macro targets are: `async-stream-impl`, `displaydoc`, `futures-macro`, `jni-macros`, `jni-sys-macros`, `pin-project-internal`, `ref-cast-impl`, `rustversion`, `schemars_derive`, `serde_derive`, `thiserror-impl`, `tokio-macros`, `tracing-attributes`, `wasm-bindgen-macro`, `yoke-derive`, `zerofrom-derive`, and `zerovec-derive`. These are executable build inputs and are a major reason the provider feature stays optional.
+
+Metadata license review found SPDX expressions in the existing permissive set plus `webpki-root-certs 1.0.9` under `CDLA-Permissive-2.0`, which is a permissive data license and is accepted for the bundled certificate data. No package reported a missing license expression/file in this review.
+
+Pinned `cargo-audit 0.22.2` was built under `/tmp` with a separate Cargo cache. After one timed-out Git transfer, the retry loaded 1,226 RustSec advisories and scanned all 194 lockfile records. A repeat using the cached database with `--no-fetch --no-yanked` exited successfully with no vulnerability finding. Yanked-version status is not claimed by that repeat.
+
 ## Current status
 
-Phase 2 has seven exact direct runtime dependencies and 60 external crates.io packages in `Cargo.lock`. The dependency delta, enabled features, build targets, proc macros, sources, duplicates, and native links were inspected before acceptance.
+The deterministic build remains the lower-risk fallback and can be built/tested without the 133-package Rig delta. Real-agent mode is a conscious larger trust decision: it adds a network client, structured-output macros, URL/Unicode stacks, and Ring native build code. Direct versions and sources are pinned, broad defaults are disabled, no provider tool access is granted, and no key is available to dependency build scripts in the documented build flow.
 
-`cargo-audit 0.22.2` remains isolated under `/tmp/meld-tools`. It refreshed and loaded 1,225 RustSec advisories, scanned all 61 lockfile records, and returned no vulnerability finding. The separate crates.io yanked-version lookup timed out, so the successful recorded advisory scan was repeated explicitly with `--no-yanked`; yanked status is not claimed as verified. `cargo-deny` and `cargo-vet` are not installed. Automated deny/vet policy, criteria-based audits, vendoring, SBOM generation, and isolated reproducible release builders remain post-MVP hardening.
+`cargo-deny` and `cargo-vet` are not installed. Automated source/license policy, criteria-based third-party audits, vendoring, SBOM generation, isolated secret-free builders, and signed provenance remain post-MVP hardening. Before demo day, build the reviewed revision without credentials in the environment, then supply a scoped runtime key only to the already-built binary.

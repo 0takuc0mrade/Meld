@@ -60,7 +60,7 @@ async fn health_endpoint_reports_readiness_without_environment_details() {
     let body = body_text(response).await;
     assert!(body.contains(r#""status":"ready""#));
     assert!(body.contains(r#""service":"meld""#));
-    assert!(body.contains(r#""phase":2"#));
+    assert!(body.contains(r#""phase":3"#));
     assert!(!body.contains("environment"));
 }
 
@@ -77,7 +77,7 @@ async fn starting_demo_returns_a_fresh_task_and_fetchable_snapshot() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let snapshot = body_text(response).await;
-    assert!(snapshot.contains(r#""title":"Recover a reliability brief""#));
+    assert!(snapshot.contains(r#""title":"Diagnose a checkout incident""#));
     assert!(snapshot.contains(r#""task_id":1"#));
 }
 
