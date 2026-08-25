@@ -5,12 +5,20 @@ use meld::api::{ApiState, router};
 use meld::rig_worker::RigDemoConfig;
 use meld::supervisor::{AppState, Supervisor};
 use meld::verifier::DeterministicVerifier;
+use tracing_subscriber::Layer;
+use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .compact()
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .compact()
+                .with_filter(filter_fn(|metadata| metadata.target().starts_with("meld"))),
+        )
         .init();
 
     let supervisor = Arc::new(Supervisor::new(

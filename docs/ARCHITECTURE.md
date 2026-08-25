@@ -486,6 +486,22 @@ Meld/
 
 A single crate remains enough. State transitions remain in `supervisor.rs`; `api.rs` maps domain snapshots and events into safe serialized response types. Serde and Schemars derives are used for the narrow Rig proposal schema, not for authoritative state transitions.
 
+## External workflow boundary
+
+GitHub Actions is the first non-browser consumer. The manually dispatched workflow starts the same binary and calls the same API as every other client:
+
+```mermaid
+flowchart LR
+    Actions[GitHub Actions] -->|POST mission + poll snapshot| API[Axum API]
+    API --> Supervisor[Rust supervisor]
+    Supervisor --> Workers[Deterministic or Rig workers]
+    Supervisor --> Verifier[Deterministic verifier]
+    Supervisor --> Events[Authoritative event history]
+    Events -->|assert + job summary| Actions
+```
+
+`scripts/verify-recovery.sh` is an external observer. It cannot expire leases, reassign work, verify proposals, or complete tasks; it only invokes the mission and checks the resulting snapshot. The workflow therefore proves the deployed HTTP composition without introducing a second authority path.
+
 ## Prioritized three-day plan
 
 ### Day 1 — prove reliability without HTTP or an LLM
@@ -516,7 +532,7 @@ Exit criterion: a browser renders only backend state/events and the stale result
 
 ### Day 3 — integration, security, and rehearsal
 
-Status: Phase 3 integration, fallback, offline tests, and dependency review are complete in code on 2026-08-25. A live provider smoke remains unverified because the secure OpenAI Platform key-creation connector did not expose its creation action after authentication; no plaintext fallback was used.
+Status: Phase 3 integration, fallback, offline tests, dependency review, and a CI-workflow recovery gate are complete in code on 2026-08-25. A live key authenticated successfully, but OpenAI returned `429 insufficient_quota`; live model output and a full two-provider-call recovery therefore remain unverified until API credit is available.
 
 1. Review the Rig dependency delta and add the adapter only if it is stable enough for the demo.
 2. Keep a deterministic local worker mode as an offline fallback that exercises identical supervisor logic.

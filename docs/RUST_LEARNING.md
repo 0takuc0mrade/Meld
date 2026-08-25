@@ -470,3 +470,21 @@ This provider timeout is distinct from the assignment lease. Configuration requi
 **Problem solved:** Real-agent mode cannot start with a missing key, zero/invalid duration, provider timeout longer than the assignment lease, or Worker A delay too short to demonstrate a stale return after generation 2.
 
 This follows a common Rust pattern: parse untrusted strings at the boundary, return a typed error for invalid input, and let the rest of the program operate on validated types.
+
+## Layer-local tracing filters as a security boundary
+
+**Where:** tracing setup in `src/main.rs`.
+
+**What:** `tracing_subscriber::registry()` composes a formatting layer with a `filter_fn`. The closure receives event metadata before formatting and accepts only targets that start with `meld`.
+
+```rust
+tracing_subscriber::fmt::layer().with_filter(filter_fn(|metadata| {
+    metadata.target().starts_with("meld")
+}))
+```
+
+Rust crate/module paths normally become tracing targets, so Meld retains its own structured records while records originating inside HTTP/provider dependencies are excluded from ordinary runtime output.
+
+**Problem solved:** Converting a dependency error into `WorkerError::Execution` protects later API responses and Meld-authored logs, but it cannot retract a verbose log the dependency emitted before returning. Filtering at the subscriber boundary closes that separate channel.
+
+**Tradeoff:** This intentionally sacrifices low-level dependency diagnostics. Security-sensitive production logs should default to the least data; targeted dependency tracing belongs in an isolated, explicitly enabled diagnostic mode with its own redaction review.

@@ -1,0 +1,105 @@
+name: Meld recovery gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: Worker implementation used by the real Meld supervisor
+        required: true
+        default: deterministic
+        type: choice
+        options:
+          - deterministic
+          - rig
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meld-recovery-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prove-recovery:
+    name: Prove recovery and stale-result rejection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      MELD_BIND: 127.0.0.1:3000
+      MELD_EXECUTION_MODE: ${{ inputs.execution_mode }}
+
+    steps:
+      - name: Check out the reviewed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --no-self-update
+
+      - name: Build the requested Meld mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MELD_EXECUTION_MODE" == "rig" ]]; then
+            cargo build --locked --features rig-worker
+          else
+            cargo build --locked
+          fi
+
+      - name: Start Meld
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ inputs.execution_mode == 'rig' && secrets.OPENAI_API_KEY || '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$MELD_EXECUTION_MODE" == "rig" && -z "$OPENAI_API_KEY" ]]; then
+            echo "Rig mode requires the OPENAI_API_KEY repository secret." >&2
+            exit 1
+          fi
+          target/debug/meld >"$RUNNER_TEMP/meld.log" 2>&1 &
+          echo "$!" >"$RUNNER_TEMP/meld.pid"
+
+          for _ in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3000/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Meld did not become ready." >&2
+          exit 1
+
+      - name: Run the CI recovery gate
+        shell: bash
+        env:
+          MELD_PROOF_PATH: ${{ runner.temp }}/meld-proof.json
+        run: bash scripts/verify-recovery.sh
+
+      - name: Publish the authoritative proof
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/meld-proof.json"
+          {
+            echo "# Meld recovery gate passed"
+            echo
+            echo "- Mode: \`$MELD_EXECUTION_MODE\`"
+            jq -r '"- Task: `\(.task_id)`\n- Accepted worker: `\(.accepted_result.worker_id)`\n- Accepted generation: `\(.accepted_result.generation)`\n- Final event sequence: `\(.current_sequence)`"' "$proof"
+            echo
+            echo "## Backend-authored lifecycle"
+            echo
+            jq -r '.events[] | "- `\(.sequence)` **\(.kind)** — \(.message)"' "$proof"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Stop Meld and show safe logs
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/meld.pid" ]]; then
+            kill "$(<"$RUNNER_TEMP/meld.pid")" 2>/dev/null || true
+          fi
+          if [[ -f "$RUNNER_TEMP/meld.log" ]]; then
+            sed -n '1,240p' "$RUNNER_TEMP/meld.log"
+          fi

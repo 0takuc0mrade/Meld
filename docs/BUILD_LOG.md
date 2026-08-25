@@ -303,9 +303,11 @@ The runtime defaults to deterministic mode. `MELD_EXECUTION_MODE=rig` additional
 
 ### Credentialed smoke status
 
-The environment had no `OPENAI_API_KEY`. The user authorized secure key creation and approved `/home/peterjune/Meld/.env.local`, but the authenticated OpenAI Platform connector stopped exposing the key-creation action after authentication. No key or partial env file was created, no plaintext key was requested or handled, and no provider credits were spent.
+A scoped replacement OpenAI Platform key was securely created and written only to ignored `.env.local`; no plaintext key was printed or committed. The earlier key whose one-time payload was not captured must be revoked from the OpenAI dashboard.
 
-Consequently, the real OpenAI smoke and full credentialed recovery run were not performed. The code path is compiled and tested through a narrow mocked `IncidentAnalyzer`, but the report does not claim that provider access, model entitlement, credits, or live structured extraction succeeded. `.env.example` and the README document the explicit live run once a scoped key is available.
+A real Rig smoke reached OpenAI and authenticated, but the provider returned HTTP `429` with code `insufficient_quota` after approximately eight seconds. This proves credential acceptance and the real HTTP/provider boundary, but it does not prove model output, structured extraction, or the complete two-agent live recovery. Those claims remain blocked until the API project has available credit and spend capacity.
+
+The first failure also exposed an observability issue: Rig's dependency logging emitted the provider's verbose error body and headers before Meld safely classified the returned error. No API key was printed, but provider metadata did appear. `src/main.rs` now filters ordinary tracing to Meld-owned targets. A second credentialed smoke and an Axum mission run showed only safe Meld categories such as `model provider request failed`; dependency response bodies and headers were absent.
 
 ### Tests and failure coverage
 
@@ -345,3 +347,11 @@ Added `README.md`, `.env.example`, `src/rig_worker.rs`, `tests/rig_worker.rs`, a
 - Provider rate limits and quota errors are grouped into the safe provider-failure category rather than surfaced with fine-grained retry policy.
 - State remains in memory and a process restart loses the mission.
 - The application reads environment variables directly; it does not automatically load `.env.local`.
+
+## 2026-08-25 — Phase 3.1: GitHub Actions recovery workflow
+
+Meld now has an actual developer workflow rather than a demo-specific chat adapter. `.github/workflows/meld-recovery.yml` is manually dispatched, builds the requested execution mode, starts the Axum server, and calls it through `scripts/verify-recovery.sh`. The script polls only the public task snapshot and requires Worker B generation 2, one verification pass, one completion, and the generation-1/current-generation-2 stale rejection.
+
+The local deterministic rehearsal passed over HTTP with task 1, Worker B, generation 2, and final event sequence 13. Server logs contained the complete authoritative progression from `task.created` through `submission.stale_rejected`. The workflow publishes those backend events in GitHub's job summary.
+
+The workflow uses read-only permissions, manual dispatch, an exact checkout action commit, disabled checkout credential persistence, a pinned runner/toolchain, and the committed Cargo lockfile. Deterministic mode receives no provider secret. Rig mode evaluates the repository secret only in the server-start step and remains intentionally unrun while the current OpenAI project reports insufficient quota.

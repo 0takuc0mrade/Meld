@@ -226,3 +226,18 @@ Pinned `cargo-audit 0.22.2` was built under `/tmp` with a separate Cargo cache. 
 The deterministic build remains the lower-risk fallback and can be built/tested without the 133-package Rig delta. Real-agent mode is a conscious larger trust decision: it adds a network client, structured-output macros, URL/Unicode stacks, and Ring native build code. Direct versions and sources are pinned, broad defaults are disabled, no provider tool access is granted, and no key is available to dependency build scripts in the documented build flow.
 
 `cargo-deny` and `cargo-vet` are not installed. Automated source/license policy, criteria-based third-party audits, vendoring, SBOM generation, isolated secret-free builders, and signed provenance remain post-MVP hardening. Before demo day, build the reviewed revision without credentials in the environment, then supply a scoped runtime key only to the already-built binary.
+
+## GitHub Actions workflow review
+
+The recovery gate adds no Cargo, JavaScript, or system-package dependency. It has these controls:
+
+- it runs only through `workflow_dispatch`, never on untrusted pull-request code;
+- job permissions are reduced to read-only repository contents;
+- `actions/checkout` is pinned to the immutable commit `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1), with credential persistence disabled;
+- the runner image and Rust toolchain are pinned to `ubuntu-24.04` and Rust 1.95.0;
+- Cargo always uses the committed lockfile;
+- deterministic mode receives no OpenAI secret;
+- the repository secret is evaluated only for the server-start step when the manual `rig` input is selected;
+- the workflow gives the agent no shell, filesystem, GitHub API, or arbitrary URL-fetching tool.
+
+GitHub-hosted runner images and the `rustup` distribution channel remain external trust boundaries. An immutable action commit prevents tag movement but does not independently audit that action's implementation. A hardened production pipeline would additionally pin or attest the runner image, pre-stage the toolchain, retain signed build provenance, and run on an isolated secret-free builder before attaching runtime credentials.

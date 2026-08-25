@@ -339,3 +339,23 @@
 **Why:** Both modes use the same API, supervisor, deadlines, generations, verifier, and events. Only the `Worker` implementation changes. Provider requests have a server timeout, and timing configuration is validated so Worker B can finish before Worker A returns stale.
 
 **Tradeoffs:** There are two build variants and operational configuration must be explicit. Offline tests mock the narrow analyzer boundary, so a separate credentialed smoke is still required to prove provider access.
+
+## ADR-025 — GitHub Actions is the first external workflow
+
+**Decision:** Provide a manual GitHub Actions gate that drives Meld through its public HTTP API and verifies the authoritative recovery snapshot.
+
+**Context:** Meld is presented as a developer tool and needs to operate inside an actual workflow. A chat integration would add public ingress, request-signature verification, response deadlines, another credential, and another service without strengthening the reliability proof.
+
+**Why:** CI is a native developer workflow. The same script works locally and remotely, and the GitHub job summary preserves the backend event sequence as inspectable evidence. Manual dispatch prevents surprise provider spending.
+
+**Tradeoffs:** The first integration is not conversational. The deterministic mode proves orchestration but not provider availability; Rig mode still requires a funded scoped repository secret.
+
+## ADR-026 — Ordinary runtime logs accept only Meld-owned targets
+
+**Decision:** Install a tracing layer filtered to metadata targets beginning with `meld`.
+
+**Context:** A credentialed request that failed with `429 insufficient_quota` showed that a provider dependency could log its full HTTP error body and headers before Meld converted the returned error into a safe category.
+
+**Why:** Safe error mapping controls Meld's events and API responses, but it cannot redact records already emitted by a dependency. Target filtering makes the production log boundary explicit while retaining Meld's structured lifecycle and safe provider-boundary records.
+
+**Tradeoffs:** Dependency diagnostics are unavailable in normal logs. They may be enabled only in a controlled debugging environment where payloads and headers are separately redacted.

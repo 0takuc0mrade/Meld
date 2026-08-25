@@ -84,6 +84,25 @@ cargo test --features rig-worker --locked
 
 The feature-enabled tests use a narrow mocked analyzer boundary, so they need no provider account or network. They cover valid structured output, malformed output, provider failure, provider timeout, delayed execution, normal recovery, deterministic acceptance, and generation-1 stale rejection.
 
+## Run Meld as a real developer workflow
+
+The repository includes a manually dispatched GitHub Actions recovery gate. It checks out an exact revision, builds Meld with the pinned Rust toolchain, starts the real Axum server, invokes the mission through HTTP, and fails unless the backend proves all of these outcomes:
+
+- Worker A's generation-1 lease expires;
+- Worker B's generation 2 passes deterministic verification and completes;
+- Worker A's late generation-1 submission is rejected;
+- the accepted result still belongs to Worker B.
+
+In GitHub, open **Actions → Meld recovery gate → Run workflow** and select `deterministic`. The run publishes the complete backend-authored lifecycle in its job summary. This is Meld operating inside an actual remote CI workflow, not a browser animation or a unit-test-only simulation.
+
+The optional `rig` choice additionally needs an `OPENAI_API_KEY` repository secret with available API credit. The secret is exposed only to the server-start step when Rig mode is explicitly selected. Do not add a key merely to run the deterministic proof.
+
+The same gate can be rehearsed locally while Meld is running:
+
+```bash
+bash scripts/verify-recovery.sh
+```
+
 ## API compatibility
 
 Phase 3 keeps the Phase 2 browser contract intact:
@@ -97,7 +116,7 @@ The frontend files are unchanged in Phase 3. Deterministic and real-agent modes 
 
 ## Security and current limits
 
-All direct dependency versions are exact and `Cargo.lock` is committed. The Rig integration is optional, uses one provider, disables broad defaults, uses Rustls with an explicit Ring provider, and logs identifiers/provider/model rather than secrets, prompts, or full outputs. See [Supply-chain security](docs/SUPPLY_CHAIN_SECURITY.md) for the complete dependency review and demo procedure.
+All direct dependency versions are exact and `Cargo.lock` is committed. The Rig integration is optional, uses one provider, disables broad defaults, uses Rustls with an explicit Ring provider, and logs identifiers/provider/model rather than secrets, prompts, or full outputs. Runtime tracing is filtered to Meld-owned targets so a dependency cannot print an unredacted provider response into ordinary server logs. See [Supply-chain security](docs/SUPPLY_CHAIN_SECURITY.md) for the complete dependency and workflow review.
 
 This is an in-memory, single-process MVP. Restarting loses task state. Assignment tokens are not yet remote-worker credentials. There is no multi-node leader election, durable event log, arbitrary user-authored mission schema, broad agent tool access, or model-as-judge authority.
 
