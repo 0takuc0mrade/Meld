@@ -27,7 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let api_state = configure_demo(ApiState::new(supervisor))?;
     let app = router(api_state);
-    let address = std::env::var("MELD_BIND").unwrap_or_else(|_| "127.0.0.1:3000".to_owned());
+    let address = std::env::var("MELD_BIND").unwrap_or_else(|_| {
+        std::env::var("PORT").map(|p| format!("0.0.0.0:{}", p)).unwrap_or_else(|_| "127.0.0.1:3000".to_owned())
+    });
     let listener = tokio::net::TcpListener::bind(&address).await?;
 
     tracing::info!(event = "meld.started", %address, "Meld is ready");

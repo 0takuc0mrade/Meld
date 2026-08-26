@@ -264,7 +264,7 @@ async fn frontend_assets_are_served_locally_with_security_headers() {
     assert_eq!(index.status(), StatusCode::OK);
     assert!(index.headers().contains_key("content-security-policy"));
     let html = body_text(index).await;
-    assert!(html.contains("Agent work,"));
+    assert!(html.contains("AI agents can fail."));
     assert!(html.contains("/app.js"));
     assert!(!html.contains("https://cdn"));
 

@@ -1,0 +1,7 @@
+target/
+.git/
+.github/
+.env*
+docs/
+scripts/
+Cargo.lock

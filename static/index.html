@@ -40,9 +40,9 @@
     <main id="mainContent">
       <section class="orientation" aria-labelledby="page-title">
         <div class="orientation__copy">
-          <p class="orientation__eyebrow"><span>Control plane</span> Failure does not transfer authority</p>
-          <h1 id="page-title">Agent work,<br><span>kept<br>authoritative.</span></h1>
-          <p>Meld detects failed execution, moves the mission to a fresh generation, verifies the replacement, and refuses late work that no longer owns the task.</p>
+          <p class="orientation__eyebrow"><span>Reliable AI workflows</span> Failure does not transfer authority</p>
+          <h1 id="page-title">AI agents can fail.<br><span>The work shouldn’t.</span></h1>
+          <p>Meld recovers a stalled AI mission, verifies the replacement result, and blocks outdated work from taking control.</p>
         </div>
 
         <div class="orientation__action">
@@ -51,7 +51,7 @@
               <path d="M12 3 5 6v5c0 4.8 2.9 8.1 7 10 4.1-1.9 7-5.2 7-10V6l-7-3Z"></path>
               <path d="m9 12 2 2 4-5"></path>
             </svg>
-            The backend owns every transition.
+            The valid result stays in control.
           </p>
           <button class="primary-action" id="runDemo" type="button">
             <span class="primary-action__label">Run recovery mission</span>
@@ -60,7 +60,7 @@
               <path d="m14 7 5 5-5 5"></path>
             </svg>
           </button>
-          <p class="action-help" id="actionHelp">A fresh task and event history are created for every run.</p>
+          <p class="action-help" id="actionHelp">Watch a real failure, automatic recovery, and trusted result.</p>
         </div>
       </section>
 
@@ -68,7 +68,8 @@
         <div>
           <p class="mission-strip__label">Current mission</p>
           <h2 id="missionTitle">No mission running</h2>
-          <p id="missionObjective">Start a recovery mission to watch Meld supervise real controlled workers.</p>
+          <p id="missionObjective">Investigate a checkout outage and identify the affected service, onset, and evidence.</p>
+          <p class="mission-strip__why">If an AI worker hangs or returns too late, Meld keeps the workflow moving and prevents outdated work from replacing the trusted result.</p>
         </div>
         <div class="mission-strip__state" id="missionState" data-state="idle">
           <span class="status-mark" aria-hidden="true"></span>
@@ -79,8 +80,8 @@
       <section class="execution" id="execution-map" aria-labelledby="executionTitle">
         <div class="section-head">
           <div>
-            <h2 id="executionTitle">Execution map</h2>
-            <p>One mission, four roles, and a single authoritative generation.</p>
+            <h2 id="executionTitle">Live recovery story</h2>
+            <p>Follow the mission from first attempt to verified replacement.</p>
           </div>
           <div class="live-event" aria-live="polite" aria-atomic="true">
             <span>Latest backend event</span>
@@ -89,17 +90,17 @@
         </div>
 
         <ol class="lifecycle-rail" id="lifecycleRail" aria-label="Authoritative recovery lifecycle">
-          <li data-phase="assign" data-state="idle"><span>01</span><strong>Assign</strong><small>Generation 1</small></li>
-          <li data-phase="monitor" data-state="idle"><span>02</span><strong>Monitor</strong><small>Backend lease</small></li>
-          <li data-phase="recover" data-state="idle"><span>03</span><strong>Recover</strong><small>Generation 2</small></li>
-          <li data-phase="verify" data-state="idle"><span>04</span><strong>Verify</strong><small>Policy gate</small></li>
-          <li data-phase="defend" data-state="idle"><span>05</span><strong>Defend</strong><small>Reject stale work</small></li>
+          <li data-phase="assign" data-state="idle"><span>01</span><strong>Assign</strong><small>Agent A · generation 1</small></li>
+          <li data-phase="monitor" data-state="idle"><span>02</span><strong>Watch</strong><small>Detect a timeout</small></li>
+          <li data-phase="recover" data-state="idle"><span>03</span><strong>Reassign</strong><small>Agent B · generation 2</small></li>
+          <li data-phase="verify" data-state="idle"><span>04</span><strong>Verify</strong><small>Check the evidence</small></li>
+          <li data-phase="defend" data-state="idle"><span>05</span><strong>Protect</strong><small>Reject late work</small></li>
         </ol>
 
         <div class="authority-readout" id="authorityReadout" data-state="idle" aria-live="polite" aria-atomic="true">
           <div class="authority-readout__signal" aria-hidden="true"><span></span></div>
           <div>
-            <span>Authoritative assignment</span>
+            <span>Trusted owner</span>
             <strong id="authorityOwner">No assignment issued</strong>
           </div>
           <p id="authorityReason">Meld will display the worker and generation currently allowed to submit.</p>
@@ -113,8 +114,8 @@
           <article class="node node--worker-a" id="workerA" data-state="idle">
             <div class="node__index">A</div>
             <div class="node__body">
-              <p class="node__role">Primary assignment</p>
-              <h3>Worker A</h3>
+              <p class="node__role">First attempt</p>
+              <h3>Agent A</h3>
               <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Standing by</span></p>
               <dl>
                 <div><dt>Generation</dt><dd>—</dd></div>
@@ -152,8 +153,8 @@
           <article class="node node--worker-b" id="workerB" data-state="idle">
             <div class="node__index">B</div>
             <div class="node__body">
-              <p class="node__role">Recovery assignment</p>
-              <h3>Worker B</h3>
+              <p class="node__role">Recovery attempt</p>
+              <h3>Agent B</h3>
               <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Waiting for recovery</span></p>
               <dl>
                 <div><dt>Generation</dt><dd>—</dd></div>
@@ -186,8 +187,8 @@
         <div class="ledger" id="event-ledger">
           <div class="section-head section-head--compact">
             <div>
-              <h2>Event ledger</h2>
-              <p>The readable story, ordered by backend sequence.</p>
+              <h2>Live activity</h2>
+              <p>What Meld just did, in backend-authored order.</p>
             </div>
             <span class="sequence-badge" id="sequenceBadge">Sequence —</span>
           </div>
@@ -200,29 +201,54 @@
         </div>
 
         <aside class="proof" id="proof" aria-labelledby="proofTitle" data-state="idle">
-          <p class="proof__eyebrow">Acceptance record</p>
+          <p class="proof__eyebrow">Trusted outcome</p>
           <div class="proof__head">
             <svg viewBox="0 0 48 48" aria-hidden="true">
               <path d="M24 5 9 11v11c0 10 6 17 15 21 9-4 15-11 15-21V11L24 5Z"></path>
               <path d="m17 24 5 5 10-12"></path>
             </svg>
             <div>
-              <h2 id="proofTitle">Accepted result</h2>
+              <h2 id="proofTitle">Mission result</h2>
               <p id="proofStatus">No result has been accepted.</p>
             </div>
           </div>
 
           <ul class="proof-list" id="proofList">
-            <li data-proof="recovered"><span class="proof-mark" aria-hidden="true"></span><span>Worker failure recovered</span></li>
+            <li data-proof="recovered"><span class="proof-mark" aria-hidden="true"></span><span>Agent failure recovered</span></li>
             <li data-proof="reassigned"><span class="proof-mark" aria-hidden="true"></span><span>Task reassigned automatically</span></li>
             <li data-proof="verified"><span class="proof-mark" aria-hidden="true"></span><span>Replacement verified and accepted</span></li>
             <li data-proof="stale"><span class="proof-mark" aria-hidden="true"></span><span>Old generation rejected as stale</span></li>
           </ul>
 
-          <blockquote class="accepted-output" id="acceptedOutput" hidden>
-            <p id="acceptedSummary"></p>
-            <footer id="acceptedMeta"></footer>
-          </blockquote>
+          <section class="accepted-output" id="acceptedOutput" aria-labelledby="analysisTitle" hidden>
+            <h3 id="analysisTitle">Accepted analysis</h3>
+            <dl class="analysis-facts">
+              <div><dt>Affected service</dt><dd id="acceptedComponent">—</dd></div>
+              <div><dt>Incident onset</dt><dd id="acceptedOnset">—</dd></div>
+              <div><dt>Evidence</dt><dd id="acceptedEvidence">—</dd></div>
+            </dl>
+            <p class="accepted-summary" id="acceptedSummary"></p>
+            <p class="accepted-meta" id="acceptedMeta"></p>
+          </section>
+
+          <section class="verification-proof" id="verificationProof" aria-labelledby="verificationTitle" hidden>
+            <h3 id="verificationTitle">Meld checks</h3>
+            <p id="verificationStatement">The deterministic acceptance policy has not run yet.</p>
+            <ul id="verificationChecks"></ul>
+          </section>
+
+          <section class="authority-decision" id="authorityDecision" aria-labelledby="decisionTitle" hidden>
+            <h3 id="decisionTitle">Authority decision</h3>
+            <p>Agent A finished too late. Its old generation could not replace the accepted result.</p>
+            <div class="decision-row decision-row--rejected">
+              <span><strong>Agent A</strong><small id="rejectedGeneration">Generation 1</small></span>
+              <b>Rejected</b>
+            </div>
+            <div class="decision-row decision-row--accepted">
+              <span><strong>Agent B</strong><small id="acceptedGeneration">Generation 2</small></span>
+              <b>Accepted</b>
+            </div>
+          </section>
         </aside>
       </section>
 

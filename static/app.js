@@ -31,8 +31,17 @@ const elements = {
   proofStatus: document.querySelector("#proofStatus"),
   proofList: document.querySelector("#proofList"),
   acceptedOutput: document.querySelector("#acceptedOutput"),
+  acceptedComponent: document.querySelector("#acceptedComponent"),
+  acceptedOnset: document.querySelector("#acceptedOnset"),
+  acceptedEvidence: document.querySelector("#acceptedEvidence"),
   acceptedSummary: document.querySelector("#acceptedSummary"),
   acceptedMeta: document.querySelector("#acceptedMeta"),
+  verificationProof: document.querySelector("#verificationProof"),
+  verificationStatement: document.querySelector("#verificationStatement"),
+  verificationChecks: document.querySelector("#verificationChecks"),
+  authorityDecision: document.querySelector("#authorityDecision"),
+  rejectedGeneration: document.querySelector("#rejectedGeneration"),
+  acceptedGeneration: document.querySelector("#acceptedGeneration"),
   technicalDetails: document.querySelector("#technicalDetails"),
   detailTask: document.querySelector("#detailTask"),
   detailSequence: document.querySelector("#detailSequence"),
@@ -224,7 +233,7 @@ function render() {
     elements.missionStateLabel.textContent = snapshot.status.label;
   }
 
-  elements.latestEvent.textContent = latest?.message || "No events received";
+  elements.latestEvent.textContent = latest ? readableEventMessage(latest) : "No events received";
   elements.sequenceBadge.textContent = latest ? `Sequence ${latest.sequence}` : "Sequence —";
   renderTopology(snapshot, events);
   renderLifecycle(snapshot);
@@ -272,7 +281,7 @@ function renderAuthority(snapshot) {
 
   if (accepted) {
     elements.authorityReadout.dataset.state = "complete";
-    elements.authorityOwner.textContent = `${accepted.worker_id} · generation ${accepted.generation}`;
+    elements.authorityOwner.textContent = `${actorLabel(accepted.worker_id)} · generation ${accepted.generation}`;
     elements.authorityReason.textContent = stale
       ? "Locked result held; the late generation was refused."
       : "Accepted result locked by deterministic policy.";
@@ -288,7 +297,7 @@ function renderAuthority(snapshot) {
 
   if (status.worker_id && status.generation) {
     elements.authorityReadout.dataset.state = "running";
-    elements.authorityOwner.textContent = `${status.worker_id} · generation ${status.generation}`;
+    elements.authorityOwner.textContent = `${actorLabel(status.worker_id)} · generation ${status.generation}`;
     elements.authorityReason.textContent = "Only this assignment token may submit for verification.";
     return;
   }
@@ -307,9 +316,13 @@ function uiState(status) {
 
 function renderTopology(snapshot, events) {
   const workerAStarted = lastEvent("worker.started", (event) => event.worker_id === "Worker A");
+  const agentAStarted = lastEvent("agent.execution.started", (event) => event.worker_id === "Worker A");
+  const agentAParsed = lastEvent("agent.output.parsed", (event) => event.worker_id === "Worker A");
   const workerAExpired = lastEvent("assignment.expired", (event) => event.worker_id === "Worker A");
   const workerAStale = lastEvent("submission.stale_rejected", (event) => event.worker_id === "Worker A");
   const workerBStarted = lastEvent("worker.started", (event) => event.worker_id === "Worker B");
+  const agentBStarted = lastEvent("agent.execution.started", (event) => event.worker_id === "Worker B");
+  const agentBParsed = lastEvent("agent.output.parsed", (event) => event.worker_id === "Worker B");
   const completed = lastEvent("task.completed");
   const verificationStarted = lastEvent("verification.started");
   const verificationPassed = lastEvent("verification.passed");
@@ -318,7 +331,11 @@ function renderTopology(snapshot, events) {
   if (workerAStale) {
     setNode(elements.workerA, "stale", "Late result rejected", workerAStale.submitted_generation, "Expired");
   } else if (workerAExpired) {
-    setNode(elements.workerA, "expired", "Backend lease expired", workerAExpired.generation, "Expired");
+    setNode(elements.workerA, "expired", agentAParsed ? "Result arrived too late" : "Assignment timed out", workerAExpired.generation, "Revoked");
+  } else if (agentAParsed) {
+    setNode(elements.workerA, "running", "Candidate result ready", agentAParsed.generation, durationLabel(agentAParsed.duration_ms));
+  } else if (agentAStarted) {
+    setNode(elements.workerA, "running", "Analyzing evidence", agentAStarted.generation, "AI running");
   } else if (workerAStarted) {
     const lease = snapshot?.status?.worker_id === "Worker A" ? leaseLabel(snapshot.status.lease_remaining_ms) : "Backend-owned";
     setNode(elements.workerA, "running", "Executing mission", workerAStarted.generation, lease);
@@ -328,6 +345,10 @@ function renderTopology(snapshot, events) {
 
   if (completed) {
     setNode(elements.workerB, "complete", "Result accepted", completed.generation, "Accepted");
+  } else if (agentBParsed) {
+    setNode(elements.workerB, "running", "Candidate result ready", agentBParsed.generation, durationLabel(agentBParsed.duration_ms));
+  } else if (agentBStarted) {
+    setNode(elements.workerB, "running", "Analyzing evidence", agentBStarted.generation, "AI running");
   } else if (workerBStarted) {
     setNode(elements.workerB, "running", "Executing recovery", workerBStarted.generation, "Pending");
   } else if (workerAExpired) {
@@ -364,6 +385,11 @@ function leaseLabel(value) {
   return `${value.toLocaleString()} ms at snapshot`;
 }
 
+function durationLabel(value) {
+  if (value === null || value === undefined) return "Result ready";
+  return `${(value / 1000).toFixed(1)} s`;
+}
+
 function setNode(node, state, status, generation, secondary) {
   node.dataset.state = state;
   node.querySelector(".node__status span:last-child").textContent = status;
@@ -397,7 +423,7 @@ function renderTimeline(events) {
     const body = document.createElement("div");
     body.className = "timeline__body";
     const message = document.createElement("strong");
-    message.textContent = event.message;
+    message.textContent = readableEventMessage(event);
     const meta = document.createElement("span");
     meta.textContent = eventMeta(event);
     body.append(message, meta);
@@ -408,16 +434,32 @@ function renderTimeline(events) {
 }
 
 function eventMeta(event) {
-  const parts = [event.kind];
-  if (event.worker_id) parts.push(event.worker_id);
+  const parts = [];
+  if (event.worker_id) parts.push(actorLabel(event.worker_id));
+  if (event.from_worker_id && event.to_worker_id) {
+    parts.push(`${actorLabel(event.from_worker_id)} → ${actorLabel(event.to_worker_id)}`);
+  }
   if (event.generation) parts.push(`generation ${event.generation}`);
   if (event.submitted_generation) parts.push(`submitted ${event.submitted_generation}`);
-  if (event.current_generation) parts.push(`current ${event.current_generation}`);
+  if (event.current_generation) parts.push(`trusted ${event.current_generation}`);
+  if (event.duration_ms !== null && event.duration_ms !== undefined) {
+    parts.push(durationLabel(event.duration_ms));
+  }
   const time = new Date(event.occurred_at_ms);
   if (!Number.isNaN(time.valueOf())) {
     parts.push(time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
   }
   return parts.join(" · ");
+}
+
+function actorLabel(value) {
+  return value?.replace(/^Worker /, "Agent ") || value;
+}
+
+function readableEventMessage(event) {
+  return event.message
+    .replaceAll("Worker A", "Agent A")
+    .replaceAll("Worker B", "Agent B");
 }
 
 function renderProof(snapshot) {
@@ -435,16 +477,67 @@ function renderProof(snapshot) {
     elements.proof.dataset.state = "idle";
     elements.proofStatus.textContent = recovered ? "Recovery is underway; no result is authoritative yet." : "No result has been accepted.";
     elements.acceptedOutput.hidden = true;
+    elements.verificationProof.hidden = true;
+    elements.authorityDecision.hidden = true;
     return;
   }
 
   elements.proof.dataset.state = "complete";
   elements.proofStatus.textContent = stale
-    ? `Generation ${accepted.generation} remains authoritative after the late return.`
+    ? `Generation ${accepted.generation} remains trusted after the late return.`
     : `Generation ${accepted.generation} satisfied the deterministic policy.`;
+  const analysis = accepted.incident_analysis;
+  elements.acceptedComponent.textContent = analysis?.affected_component || "Not provided";
+  elements.acceptedOnset.textContent = formatOnset(analysis?.onset);
+  elements.acceptedEvidence.textContent = analysis?.evidence_ids?.join(" · ") || accepted.evidence.join(" · ");
   elements.acceptedSummary.textContent = accepted.summary;
-  elements.acceptedMeta.textContent = `${accepted.worker_id} · generation ${accepted.generation} · submission ${accepted.submission_id}`;
+  elements.acceptedMeta.textContent = `${actorLabel(accepted.worker_id)} · generation ${accepted.generation}`;
   elements.acceptedOutput.hidden = false;
+
+  elements.verificationStatement.textContent = accepted.verification.statement;
+  const checks = document.createDocumentFragment();
+  for (const check of accepted.verification.checks) {
+    const item = document.createElement("li");
+    item.dataset.passed = String(check.passed);
+    const mark = document.createElement("span");
+    mark.className = "proof-mark";
+    mark.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = check.label;
+    item.append(mark, label);
+    checks.append(item);
+  }
+  elements.verificationChecks.replaceChildren(checks);
+  elements.verificationProof.hidden = false;
+
+  const staleEvent = lastEvent("submission.stale_rejected");
+  if (staleEvent) {
+    elements.rejectedGeneration.textContent = `Generation ${staleEvent.submitted_generation}`;
+    elements.acceptedGeneration.textContent = `Generation ${accepted.generation}`;
+    elements.authorityDecision.hidden = false;
+  } else {
+    elements.authorityDecision.hidden = true;
+  }
+}
+
+function formatOnset(value) {
+  if (!value) return "Not provided";
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  const time = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short",
+  });
+  const day = date.toLocaleDateString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `${time} · ${day}`;
 }
 
 function setProof(name, confirmed) {
