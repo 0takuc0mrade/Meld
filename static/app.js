@@ -16,6 +16,10 @@ const elements = {
   timeline: document.querySelector("#timeline"),
   timelineEmpty: document.querySelector("#timelineEmpty"),
   sequenceBadge: document.querySelector("#sequenceBadge"),
+  lifecycleRail: document.querySelector("#lifecycleRail"),
+  authorityReadout: document.querySelector("#authorityReadout"),
+  authorityOwner: document.querySelector("#authorityOwner"),
+  authorityReason: document.querySelector("#authorityReason"),
   workerA: document.querySelector("#workerA"),
   workerB: document.querySelector("#workerB"),
   meldNode: document.querySelector("#meldNode"),
@@ -223,9 +227,75 @@ function render() {
   elements.latestEvent.textContent = latest?.message || "No events received";
   elements.sequenceBadge.textContent = latest ? `Sequence ${latest.sequence}` : "Sequence —";
   renderTopology(snapshot, events);
+  renderLifecycle(snapshot);
+  renderAuthority(snapshot);
   renderTimeline(events);
   renderProof(snapshot, events);
   renderTechnical(snapshot, latest);
+}
+
+function renderLifecycle(snapshot) {
+  const phases = [...elements.lifecycleRail.querySelectorAll("li")];
+  const setPhase = (name, state) => {
+    phases.find((phase) => phase.dataset.phase === name).dataset.state = state;
+  };
+
+  for (const phase of phases) phase.dataset.state = "idle";
+  if (!snapshot) return;
+
+  const assignedA = hasEvent("task.assigned", (event) => event.worker_id === "Worker A");
+  const startedA = hasEvent("worker.started", (event) => event.worker_id === "Worker A");
+  const expiredA = hasEvent("assignment.expired", (event) => event.worker_id === "Worker A");
+  const reassigned = hasEvent("task.reassigned");
+  const verificationStarted = hasEvent("verification.started");
+  const verificationPassed = hasEvent("verification.passed");
+  const staleRejected = hasEvent("submission.stale_rejected");
+
+  if (assignedA) setPhase("assign", startedA ? "complete" : "active");
+  if (startedA) setPhase("monitor", expiredA ? "complete" : "active");
+  if (expiredA) setPhase("recover", reassigned ? "complete" : "active");
+  if (reassigned) setPhase("verify", verificationPassed ? "complete" : verificationStarted ? "active" : "queued");
+  if (verificationPassed) setPhase("defend", staleRejected ? "complete" : "watching");
+}
+
+function renderAuthority(snapshot) {
+  if (!snapshot) {
+    elements.authorityReadout.dataset.state = "idle";
+    elements.authorityOwner.textContent = "No assignment issued";
+    elements.authorityReason.textContent = "Meld will display the worker and generation currently allowed to submit.";
+    return;
+  }
+
+  const status = snapshot.status;
+  const accepted = snapshot.accepted_result;
+  const stale = hasEvent("submission.stale_rejected");
+
+  if (accepted) {
+    elements.authorityReadout.dataset.state = "complete";
+    elements.authorityOwner.textContent = `${accepted.worker_id} · generation ${accepted.generation}`;
+    elements.authorityReason.textContent = stale
+      ? "Locked result held; the late generation was refused."
+      : "Accepted result locked by deterministic policy.";
+    return;
+  }
+
+  if (status.name === "recovering") {
+    elements.authorityReadout.dataset.state = "recovering";
+    elements.authorityOwner.textContent = `Generation ${status.generation} expired`;
+    elements.authorityReason.textContent = `Meld is issuing generation ${status.next_generation}.`;
+    return;
+  }
+
+  if (status.worker_id && status.generation) {
+    elements.authorityReadout.dataset.state = "running";
+    elements.authorityOwner.textContent = `${status.worker_id} · generation ${status.generation}`;
+    elements.authorityReason.textContent = "Only this assignment token may submit for verification.";
+    return;
+  }
+
+  elements.authorityReadout.dataset.state = uiState(status.name);
+  elements.authorityOwner.textContent = status.label;
+  elements.authorityReason.textContent = "The supervisor remains the only state authority.";
 }
 
 function uiState(status) {

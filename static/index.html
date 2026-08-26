@@ -19,6 +19,7 @@
           <path d="M4 9l12 7 12-7"></path>
         </svg>
         <span>Meld</span>
+        <small>Deterministic supervisor</small>
       </a>
 
       <div class="connection" id="connection" data-state="idle">
@@ -39,7 +40,8 @@
     <main id="mainContent">
       <section class="orientation" aria-labelledby="page-title">
         <div class="orientation__copy">
-          <h1 id="page-title">Agent work,<br><span>kept authoritative.</span></h1>
+          <p class="orientation__eyebrow"><span>Control plane</span> Failure does not transfer authority</p>
+          <h1 id="page-title">Agent work,<br><span>kept<br>authoritative.</span></h1>
           <p>Meld detects failed execution, moves the mission to a fresh generation, verifies the replacement, and refuses late work that no longer owns the task.</p>
         </div>
 
@@ -86,6 +88,23 @@
           </div>
         </div>
 
+        <ol class="lifecycle-rail" id="lifecycleRail" aria-label="Authoritative recovery lifecycle">
+          <li data-phase="assign" data-state="idle"><span>01</span><strong>Assign</strong><small>Generation 1</small></li>
+          <li data-phase="monitor" data-state="idle"><span>02</span><strong>Monitor</strong><small>Backend lease</small></li>
+          <li data-phase="recover" data-state="idle"><span>03</span><strong>Recover</strong><small>Generation 2</small></li>
+          <li data-phase="verify" data-state="idle"><span>04</span><strong>Verify</strong><small>Policy gate</small></li>
+          <li data-phase="defend" data-state="idle"><span>05</span><strong>Defend</strong><small>Reject stale work</small></li>
+        </ol>
+
+        <div class="authority-readout" id="authorityReadout" data-state="idle" aria-live="polite" aria-atomic="true">
+          <div class="authority-readout__signal" aria-hidden="true"><span></span></div>
+          <div>
+            <span>Authoritative assignment</span>
+            <strong id="authorityOwner">No assignment issued</strong>
+          </div>
+          <p id="authorityReason">Meld will display the worker and generation currently allowed to submit.</p>
+        </div>
+
         <div class="topology" id="topology" aria-label="Worker A flows through Meld recovery to Worker B and the verifier">
           <div class="topology__track" aria-hidden="true">
             <span></span><span></span><span></span>
@@ -94,6 +113,7 @@
           <article class="node node--worker-a" id="workerA" data-state="idle">
             <div class="node__index">A</div>
             <div class="node__body">
+              <p class="node__role">Primary assignment</p>
               <h3>Worker A</h3>
               <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Standing by</span></p>
               <dl>
@@ -104,6 +124,7 @@
           </article>
 
           <div class="connector connector--one" id="connectorA" data-state="idle" aria-hidden="true">
+            <small>observe</small>
             <span></span>
           </div>
 
@@ -117,18 +138,21 @@
                 <path d="M4 23V9l12 7L28 9v14"></path>
                 <path d="M4 9l12 7 12-7"></path>
               </svg>
+              <p class="node__role">Authority boundary</p>
               <h3>Meld</h3>
               <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Watching authority</span></p>
             </div>
           </article>
 
           <div class="connector connector--two" id="connectorB" data-state="idle" aria-hidden="true">
+            <small>reassign</small>
             <span></span>
           </div>
 
           <article class="node node--worker-b" id="workerB" data-state="idle">
             <div class="node__index">B</div>
             <div class="node__body">
+              <p class="node__role">Recovery assignment</p>
               <h3>Worker B</h3>
               <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Waiting for recovery</span></p>
               <dl>
@@ -139,6 +163,7 @@
           </article>
 
           <div class="connector connector--three" id="connectorVerifier" data-state="idle" aria-hidden="true">
+            <small>verify</small>
             <span></span>
           </div>
 
@@ -148,6 +173,7 @@
               <path d="m14 20 4 4 8-10"></path>
             </svg>
             <div class="node__body">
+              <p class="node__role">Deterministic gate</p>
               <h3>Verifier</h3>
               <p class="node__status"><span class="status-mark" aria-hidden="true"></span><span>Policy ready</span></p>
               <p class="node__note">Deterministic acceptance checks</p>
@@ -174,6 +200,7 @@
         </div>
 
         <aside class="proof" id="proof" aria-labelledby="proofTitle" data-state="idle">
+          <p class="proof__eyebrow">Acceptance record</p>
           <div class="proof__head">
             <svg viewBox="0 0 48 48" aria-hidden="true">
               <path d="M24 5 9 11v11c0 10 6 17 15 21 9-4 15-11 15-21V11L24 5Z"></path>

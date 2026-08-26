@@ -2,29 +2,33 @@
 :root {
   color-scheme: light;
 
-  --color-paper: oklch(97% 0.012 258);
-  --color-paper-raised: oklch(99% 0.006 258);
-  --color-paper-sunken: oklch(93% 0.022 258);
-  --color-ink: oklch(22% 0.052 261);
-  --color-ink-soft: oklch(36% 0.052 261);
-  --color-muted: oklch(44% 0.034 258);
-  --color-rule: oklch(82% 0.035 258);
-  --color-rule-strong: oklch(68% 0.065 258);
-  --color-accent: oklch(46% 0.22 264);
-  --color-accent-ink: oklch(98% 0.008 258);
-  --color-accent-soft: oklch(89% 0.072 264);
+  --color-paper: oklch(96% 0.018 84);
+  --color-paper-raised: oklch(98.5% 0.012 84);
+  --color-paper-sunken: oklch(92% 0.024 84);
+  --color-ink: oklch(18% 0.016 62);
+  --color-ink-soft: oklch(34% 0.022 62);
+  --color-muted: oklch(45% 0.018 68);
+  --color-rule: oklch(82% 0.022 78);
+  --color-rule-strong: oklch(66% 0.032 70);
+  --color-accent: oklch(52% 0.2 35);
+  --color-accent-ink: oklch(98% 0.01 84);
+  --color-accent-soft: oklch(89% 0.075 45);
   --color-positive: oklch(42% 0.13 156);
   --color-positive-soft: oklch(91% 0.055 156);
   --color-warning: oklch(50% 0.14 72);
   --color-warning-soft: oklch(92% 0.07 82);
   --color-danger: oklch(47% 0.18 25);
   --color-danger-soft: oklch(92% 0.06 25);
-  --color-focus: oklch(19% 0.055 261);
-  --color-map-dot: oklch(78% 0.045 258 / 0.58);
+  --color-focus: oklch(18% 0.016 62);
+  --color-map-dot: oklch(72% 0.055 45 / 0.5);
   --color-transparent: oklch(0% 0 0 / 0);
-  --color-backdrop: oklch(16% 0.04 261 / 0.56);
+  --color-backdrop: oklch(14% 0.018 62 / 0.6);
+  --color-field: oklch(16% 0.022 62);
+  --color-field-raised: oklch(22% 0.03 55);
+  --color-field-rule: oklch(62% 0.14 38 / 0.5);
+  --color-signal: oklch(74% 0.17 44);
 
-  --font-display: "Avenir Next", "Segoe UI Variable Display", "Trebuchet MS", sans-serif;
+  --font-display: "Arial Black", "Helvetica Neue", Arial, sans-serif;
   --font-body: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", monospace;
 
@@ -33,7 +37,7 @@
   --text-base: 1rem;
   --text-lg: 1.125rem;
   --text-xl: clamp(1.35rem, 1.1rem + 1vw, 2rem);
-  --text-display: clamp(2.65rem, 1.9rem + 4vw, 6.8rem);
+  --text-display: clamp(2.45rem, 0.9rem + 7vw, 7.2rem);
 
   --space-3xs: 0.125rem;
   --space-2xs: 0.25rem;
