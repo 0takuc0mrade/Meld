@@ -332,7 +332,7 @@
 
 ## ADR-024 — Runtime mode is separate from compile-time capability
 
-**Decision:** Default to deterministic execution. Compile real workers only with `--features rig-worker`, and activate them only when `MELD_EXECUTION_MODE=rig` and a non-empty `OPENAI_API_KEY` are present.
+**Decision:** Default to deterministic execution. Compile real workers only with `--features rig-worker`, and activate them only when `MELD_EXECUTION_MODE=rig` and the selected provider credential is present. The current provider requires `GEMINI_API_KEY`.
 
 **Context:** A demo must remain runnable when credentials, provider availability, credits, or network access fail. Accidentally compiling or selecting live mode should fail clearly rather than silently weakening behavior.
 
@@ -359,3 +359,33 @@
 **Why:** Safe error mapping controls Meld's events and API responses, but it cannot redact records already emitted by a dependency. Target filtering makes the production log boundary explicit while retaining Meld's structured lifecycle and safe provider-boundary records.
 
 **Tradeoffs:** Dependency diagnostics are unavailable in normal logs. They may be enabled only in a controlled debugging environment where payloads and headers are separately redacted.
+
+## ADR-027 — Use Gemini as Meld's single live provider
+
+**Decision:** Replace the OpenAI adapter with Rig's built-in Gemini GenerateContent adapter and default to the stable `gemini-3.6-flash` model. Use `GEMINI_API_KEY` and `MELD_GEMINI_MODEL` as the runtime contract. This supersedes ADR-023's OpenAI provider choice, but retains its explicit Ring TLS decision.
+
+**Context:** The available demo credential is a Gemini API key. Rig 0.42.0 already contains the Gemini provider, so keeping the old OpenAI client would make the credential unusable and supporting both providers would unnecessarily widen configuration and test scope.
+
+**Why:** Meld still has exactly one provider and the same narrow `IncidentAnalyzer` boundary. Provider selection, model output, and network behavior remain outside the authoritative supervisor and deterministic verifier. The authenticated Gemini API explicitly recommended 3.6 Flash for this new user after rejecting the listed 2.5 Flash model, while 3.7 Flash exceeded the controlled smoke timeout.
+
+**Tradeoffs:** The earlier OpenAI live-smoke evidence is historical and does not prove Gemini behavior. Model availability remains an external runtime dependency, and changing providers requires a fresh credentialed smoke and supply-chain/telemetry review even when the resolved crates do not change.
+
+## ADR-028 — Workers report activity; the supervisor authors events
+
+**Decision:** Pass an optional, capability-limited `WorkerActivityReporter` in `WorkRequest`. Rig workers await it for execution start, parsed output, and safe failure. The supervisor-owned implementation validates that the assignment was issued before appending a sequenced event.
+
+**Context:** `ControlledDelayWorker<RigWorker>` finishes its inner Gemini call before sleeping. Observing only the wrapper's eventual return hid the crucial fact that Agent A completed real model work before its authority expired.
+
+**Why:** The reporter exposes that fact without giving Rig or Gemini access to task state or transition methods. The activity event is authoritative because the supervisor validates and stores it; the candidate remains non-authoritative until normal submission and verification.
+
+**Tradeoffs:** `WorkRequest` now carries an internal reporting capability and the event schema has three additive variants. Candidate summaries and incident fields are safe for the synthetic fixture, but user-authored missions will need an explicit disclosure policy before those fields can be streamed.
+
+## ADR-029 — Pin the live demo to Gemini 3.6 Flash with explicit timing margin
+
+**Decision:** Default to `gemini-3.6-flash`, allow 2,048 output tokens, use a 25-second provider timeout, a 35-second assignment lease, and a 65-second post-result delay. Keep Rig retries at zero.
+
+**Context:** The authenticated provider rejected 2.5 Flash for a new user, 3.7 Flash exceeded 45 seconds, and 3.6 Flash's first 400-token response ended as a malformed tool call. With 2,048 tokens, the typed smoke and both calls in the successful recovery completed normally.
+
+**Why:** The measured 12.562-second and 6.252-second calls leave useful timeout margin. The delay remains greater than lease plus provider timeout, while the full proof completed in 77.567 seconds.
+
+**Tradeoffs:** Provider latency and model availability can still change on demo day. The deterministic mode remains the required fallback, and a future model change requires another live compatibility check rather than following a moving `latest` alias.

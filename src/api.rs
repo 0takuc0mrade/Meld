@@ -16,7 +16,8 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::domain::{
-    Assignment, FailureReason, Mission, TaskId, TaskState, TerminalFailure, WorkerOutput,
+    Assignment, FailureReason, IncidentAnalysis, Mission, TaskId, TaskState, TerminalFailure,
+    WorkerOutput,
 };
 use crate::events::{EventKind, MeldEvent};
 #[cfg(feature = "rig-worker")]
@@ -332,7 +333,8 @@ pub struct TaskSnapshotResponse {
 impl From<TaskSnapshot> for TaskSnapshotResponse {
     fn from(snapshot: TaskSnapshot) -> Self {
         let current_sequence = snapshot.events.last().map_or(0, |event| event.sequence);
-        let (status, accepted_result, failure) = task_state_response(&snapshot.state);
+        let (status, accepted_result, failure) =
+            task_state_response(&snapshot.state, &snapshot.mission);
         Self {
             task_id: snapshot.id.0,
             mission: MissionResponse::from(&snapshot.mission),
@@ -354,6 +356,7 @@ struct MissionResponse {
     title: String,
     objective: String,
     acceptance_policy: AcceptancePolicyResponse,
+    incident_policy: Option<IncidentPolicyResponse>,
 }
 
 impl From<&Mission> for MissionResponse {
@@ -366,6 +369,14 @@ impl From<&Mission> for MissionResponse {
                 required_terms: mission.acceptance.required_terms.clone(),
                 minimum_evidence_items: mission.acceptance.minimum_evidence_items,
             },
+            incident_policy: mission
+                .incident
+                .as_ref()
+                .map(|incident| IncidentPolicyResponse {
+                    expected_component: incident.verification.expected_component.clone(),
+                    expected_onset: incident.verification.expected_onset.clone(),
+                    required_evidence_ids: incident.verification.required_evidence_ids.clone(),
+                }),
         }
     }
 }
@@ -375,6 +386,13 @@ struct AcceptancePolicyResponse {
     minimum_summary_chars: usize,
     required_terms: Vec<String>,
     minimum_evidence_items: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct IncidentPolicyResponse {
+    expected_component: String,
+    expected_onset: String,
+    required_evidence_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -397,11 +415,45 @@ struct AcceptedResultResponse {
     generation: u32,
     summary: String,
     evidence: Vec<String>,
+    incident_analysis: Option<IncidentAnalysisResponse>,
+    verification: VerificationProofResponse,
     verified_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct IncidentAnalysisResponse {
+    affected_component: String,
+    onset: String,
+    evidence_ids: Vec<String>,
+}
+
+impl From<&IncidentAnalysis> for IncidentAnalysisResponse {
+    fn from(analysis: &IncidentAnalysis) -> Self {
+        Self {
+            affected_component: analysis.affected_component.clone(),
+            onset: analysis.onset.clone(),
+            evidence_ids: analysis.evidence_ids.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct VerificationProofResponse {
+    status: &'static str,
+    statement: &'static str,
+    checks: Vec<VerificationCheckResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct VerificationCheckResponse {
+    code: &'static str,
+    label: &'static str,
+    passed: bool,
 }
 
 fn task_state_response(
     state: &TaskState,
+    mission: &Mission,
 ) -> (
     TaskStatusResponse,
     Option<AcceptedResultResponse>,
@@ -454,6 +506,13 @@ fn task_state_response(
                 generation: accepted.submission.token.generation.0,
                 summary: accepted.submission.output.summary.clone(),
                 evidence: accepted.submission.output.evidence.clone(),
+                incident_analysis: accepted
+                    .submission
+                    .output
+                    .incident_analysis
+                    .as_ref()
+                    .map(IncidentAnalysisResponse::from),
+                verification: verification_proof(mission),
                 verified_at_ms: system_time_ms(accepted.verified_at),
             }),
             None,
@@ -471,6 +530,55 @@ fn task_state_response(
                 Some(failure),
             )
         }
+    }
+}
+
+fn verification_proof(mission: &Mission) -> VerificationProofResponse {
+    let mut checks = vec![
+        VerificationCheckResponse {
+            code: "summary_length",
+            label: "Summary meets the configured minimum length",
+            passed: true,
+        },
+        VerificationCheckResponse {
+            code: "required_terms",
+            label: "Summary contains the required mission terms",
+            passed: true,
+        },
+        VerificationCheckResponse {
+            code: "minimum_evidence",
+            label: "Result contains enough evidence items",
+            passed: true,
+        },
+    ];
+    if mission.incident.is_some() {
+        checks.extend([
+            VerificationCheckResponse {
+                code: "affected_component",
+                label: "Affected component matches the incident policy",
+                passed: true,
+            },
+            VerificationCheckResponse {
+                code: "incident_onset",
+                label: "Onset matches the permitted evidence",
+                passed: true,
+            },
+            VerificationCheckResponse {
+                code: "known_evidence",
+                label: "Every cited evidence ID exists in the incident data",
+                passed: true,
+            },
+            VerificationCheckResponse {
+                code: "required_evidence",
+                label: "All policy-required evidence IDs are present",
+                passed: true,
+            },
+        ]);
+    }
+    VerificationProofResponse {
+        status: "passed",
+        statement: "Result satisfied Meld's deterministic acceptance policy.",
+        checks,
     }
 }
 
@@ -536,6 +644,30 @@ struct EventResponse {
     submitted_generation: Option<u32>,
     current_generation: Option<u32>,
     reason: Option<String>,
+    provider: Option<&'static str>,
+    model: Option<String>,
+    duration_ms: Option<u64>,
+    agent_output: Option<AgentOutputResponse>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AgentOutputResponse {
+    summary: String,
+    evidence: Vec<String>,
+    incident_analysis: Option<IncidentAnalysisResponse>,
+}
+
+impl From<&WorkerOutput> for AgentOutputResponse {
+    fn from(output: &WorkerOutput) -> Self {
+        Self {
+            summary: output.summary.clone(),
+            evidence: output.evidence.clone(),
+            incident_analysis: output
+                .incident_analysis
+                .as_ref()
+                .map(IncidentAnalysisResponse::from),
+        }
+    }
 }
 
 impl From<MeldEvent> for EventResponse {
@@ -555,6 +687,10 @@ impl From<MeldEvent> for EventResponse {
             submitted_generation: None,
             current_generation: None,
             reason: None,
+            provider: None,
+            model: None,
+            duration_ms: None,
+            agent_output: None,
         };
 
         match event.kind {
@@ -578,6 +714,67 @@ impl From<MeldEvent> for EventResponse {
                 response.worker_id = Some(worker_id.to_string());
                 response.assignment_id = Some(assignment_id.0);
                 response.generation = Some(generation.0);
+            }
+            EventKind::AgentExecutionStarted {
+                worker_id,
+                assignment_id,
+                generation,
+                provider,
+                model,
+            } => {
+                response.message =
+                    format!("{worker_id} started real {provider} analysis with {model}");
+                response.worker_id = Some(worker_id.to_string());
+                response.assignment_id = Some(assignment_id.0);
+                response.generation = Some(generation.0);
+                response.provider = Some(provider);
+                response.model = Some(model);
+            }
+            EventKind::AgentOutputParsed {
+                worker_id,
+                assignment_id,
+                generation,
+                provider,
+                model,
+                duration_ms,
+                output,
+            } => {
+                response.message = output.incident_analysis.as_ref().map_or_else(
+                    || format!("{worker_id} produced a parsed {provider} candidate result"),
+                    |analysis| {
+                        format!(
+                            "{worker_id} parsed a {provider} candidate: {} at {} using {}",
+                            analysis.affected_component,
+                            analysis.onset,
+                            analysis.evidence_ids.join(", ")
+                        )
+                    },
+                );
+                response.worker_id = Some(worker_id.to_string());
+                response.assignment_id = Some(assignment_id.0);
+                response.generation = Some(generation.0);
+                response.provider = Some(provider);
+                response.model = Some(model);
+                response.duration_ms = Some(duration_ms);
+                response.agent_output = Some(AgentOutputResponse::from(&output));
+            }
+            EventKind::AgentExecutionFailed {
+                worker_id,
+                assignment_id,
+                generation,
+                provider,
+                model,
+                duration_ms,
+                reason,
+            } => {
+                response.message = format!("{worker_id} {provider} execution failed safely");
+                response.worker_id = Some(worker_id.to_string());
+                response.assignment_id = Some(assignment_id.0);
+                response.generation = Some(generation.0);
+                response.provider = Some(provider);
+                response.model = Some(model);
+                response.duration_ms = Some(duration_ms);
+                response.reason = Some(reason);
             }
             EventKind::WorkerFailed {
                 worker_id,
@@ -672,8 +869,7 @@ impl From<MeldEvent> for EventResponse {
                 response.reason = Some(code.to_string());
             }
             EventKind::VerificationPassed { submission_id } => {
-                response.message =
-                    "Output satisfied Meld’s deterministic acceptance policy".to_owned();
+                response.message = "Result satisfied Meld’s deterministic acceptance policy: component, onset, known evidence, and required evidence passed".to_owned();
                 response.submission_id = Some(submission_id.0);
             }
             EventKind::TaskCompleted {

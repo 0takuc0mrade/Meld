@@ -1,4 +1,7 @@
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use tokio::time::Instant;
@@ -382,8 +385,65 @@ impl TaskState {
     }
 }
 
+pub type WorkerActivityFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+pub(crate) trait WorkerActivityReporter: Send + Sync {
+    fn report(&self, activity: WorkerActivity) -> WorkerActivityFuture;
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerActivity {
+    AgentExecutionStarted {
+        token: AssignmentToken,
+        worker_id: WorkerId,
+        provider: &'static str,
+        model: String,
+    },
+    AgentOutputParsed {
+        token: AssignmentToken,
+        worker_id: WorkerId,
+        provider: &'static str,
+        model: String,
+        duration_ms: u64,
+        output: WorkerOutput,
+    },
+    AgentExecutionFailed {
+        token: AssignmentToken,
+        worker_id: WorkerId,
+        provider: &'static str,
+        model: String,
+        duration_ms: u64,
+        reason: String,
+    },
+}
+
+#[derive(Clone)]
 pub struct WorkRequest {
     pub mission: Mission,
     pub token: AssignmentToken,
+    activity_reporter: Option<Arc<dyn WorkerActivityReporter>>,
+}
+
+impl WorkRequest {
+    pub fn new(mission: Mission, token: AssignmentToken) -> Self {
+        Self {
+            mission,
+            token,
+            activity_reporter: None,
+        }
+    }
+
+    pub(crate) fn with_activity_reporter(
+        mut self,
+        activity_reporter: Arc<dyn WorkerActivityReporter>,
+    ) -> Self {
+        self.activity_reporter = Some(activity_reporter);
+        self
+    }
+
+    pub async fn report_activity(&self, activity: WorkerActivity) {
+        if let Some(reporter) = &self.activity_reporter {
+            reporter.report(activity).await;
+        }
+    }
 }

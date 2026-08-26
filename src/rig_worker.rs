@@ -7,18 +7,19 @@ use std::time::Duration;
 
 use rig_agent::extractor::ExtractionError;
 use rig_agent::prelude::*;
-use rig_core::providers::openai;
+use rig_core::providers::gemini;
 
 use crate::domain::{
-    IncidentAnalysis, IncidentCase, Mission, WorkRequest, WorkerError, WorkerId, WorkerOutput,
+    IncidentAnalysis, IncidentCase, Mission, WorkRequest, WorkerActivity, WorkerError, WorkerId,
+    WorkerOutput,
 };
 use crate::worker::{ControlledDelayWorker, Worker, WorkerFuture};
 
-const DEFAULT_MODEL: &str = "gpt-5-mini";
-const DEFAULT_ASSIGNMENT_LEASE_MS: u64 = 30_000;
-const DEFAULT_PROVIDER_TIMEOUT_MS: u64 = 20_000;
-const DEFAULT_AGENT_A_DELAY_MS: u64 = 55_000;
-const MAX_OUTPUT_TOKENS: u64 = 400;
+const DEFAULT_MODEL: &str = "gemini-3.6-flash";
+const DEFAULT_ASSIGNMENT_LEASE_MS: u64 = 35_000;
+const DEFAULT_PROVIDER_TIMEOUT_MS: u64 = 25_000;
+const DEFAULT_AGENT_A_DELAY_MS: u64 = 65_000;
+const MAX_OUTPUT_TOKENS: u64 = 2_048;
 
 static INSTALL_RING_PROVIDER: Once = Once::new();
 
@@ -77,25 +78,25 @@ impl IncidentAnalysisProposal {
     }
 }
 
-struct OpenAiRigAnalyzer {
+struct GeminiRigAnalyzer {
     api_key: String,
     model: String,
 }
 
-impl OpenAiRigAnalyzer {
+impl GeminiRigAnalyzer {
     fn new(api_key: String, model: String) -> Self {
         Self { api_key, model }
     }
 }
 
-impl IncidentAnalyzer for OpenAiRigAnalyzer {
+impl IncidentAnalyzer for GeminiRigAnalyzer {
     fn analyze(&self, prompt: String) -> AnalysisFuture {
         let api_key = self.api_key.clone();
         let model = self.model.clone();
 
         Box::pin(async move {
             install_ring_crypto_provider();
-            let client = openai::Client::new(&api_key).map_err(|_| AnalysisError::Provider)?;
+            let client = gemini::Client::new(&api_key).map_err(|_| AnalysisError::Provider)?;
             let extractor = client
                 .extractor::<IncidentAnalysisProposal>(&model)
                 .preamble(
@@ -140,14 +141,14 @@ pub struct RigWorker {
 }
 
 impl RigWorker {
-    pub fn openai(
+    pub fn gemini(
         id: impl Into<String>,
         api_key: String,
         model: String,
         request_timeout: Duration,
     ) -> Self {
-        let analyzer = Arc::new(OpenAiRigAnalyzer::new(api_key, model.clone()));
-        Self::with_analyzer(id, "openai", model, request_timeout, analyzer)
+        let analyzer = Arc::new(GeminiRigAnalyzer::new(api_key, model.clone()));
+        Self::with_analyzer(id, "gemini", model, request_timeout, analyzer)
     }
 
     pub fn with_analyzer(
@@ -201,11 +202,21 @@ impl Worker for RigWorker {
                 worker_id = %worker_id,
                 "Rig agent request started"
             );
+            let model_started = tokio::time::Instant::now();
+            request
+                .report_activity(WorkerActivity::AgentExecutionStarted {
+                    token: request.token,
+                    worker_id: worker_id.clone(),
+                    provider,
+                    model: model.clone(),
+                })
+                .await;
 
             let analysis =
                 match tokio::time::timeout(request_timeout, analyzer.analyze(prompt)).await {
                     Ok(Ok(analysis)) => analysis,
                     Ok(Err(error)) => {
+                        let error_message = error.to_string();
                         tracing::warn!(
                             event = if error == AnalysisError::InvalidOutput {
                                 "agent.output.invalid"
@@ -222,11 +233,22 @@ impl Worker for RigWorker {
                             error_kind = %error,
                             "Rig agent request failed"
                         );
+                        request
+                            .report_activity(WorkerActivity::AgentExecutionFailed {
+                                token: request.token,
+                                worker_id: worker_id.clone(),
+                                provider,
+                                model: model.clone(),
+                                duration_ms: elapsed_ms(model_started.elapsed()),
+                                reason: error_message.clone(),
+                            })
+                            .await;
                         return Err(WorkerError::Execution {
-                            message: error.to_string(),
+                            message: error_message,
                         });
                     }
                     Err(_) => {
+                        let error_message = "model provider request timed out".to_owned();
                         tracing::warn!(
                             event = "agent.request.failed",
                             worker_kind = "rig",
@@ -239,11 +261,24 @@ impl Worker for RigWorker {
                             error_kind = "provider_timeout",
                             "Rig agent request timed out"
                         );
+                        request
+                            .report_activity(WorkerActivity::AgentExecutionFailed {
+                                token: request.token,
+                                worker_id: worker_id.clone(),
+                                provider,
+                                model: model.clone(),
+                                duration_ms: elapsed_ms(model_started.elapsed()),
+                                reason: error_message.clone(),
+                            })
+                            .await;
                         return Err(WorkerError::Execution {
-                            message: "model provider request timed out".to_owned(),
+                            message: error_message,
                         });
                     }
                 };
+
+            let output = analysis.into_worker_output(incident);
+            let duration_ms = elapsed_ms(model_started.elapsed());
 
             tracing::info!(
                 event = "agent.request.completed",
@@ -256,10 +291,24 @@ impl Worker for RigWorker {
                 worker_id = %worker_id,
                 "Rig agent produced a structured proposal"
             );
+            request
+                .report_activity(WorkerActivity::AgentOutputParsed {
+                    token: request.token,
+                    worker_id,
+                    provider,
+                    model,
+                    duration_ms,
+                    output: output.clone(),
+                })
+                .await;
 
-            Ok(analysis.into_worker_output(incident))
+            Ok(output)
         })
     }
+}
+
+fn elapsed_ms(duration: Duration) -> u64 {
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 fn incident_prompt(mission: &Mission, incident: &IncidentCase) -> String {
@@ -273,8 +322,14 @@ fn incident_prompt(mission: &Mission, incident: &IncidentCase) -> String {
             record.id, record.observed_at, record.component, record.observation
         ));
     }
+    prompt.push_str(&format!(
+        "\nMeld deterministic acceptance policy:\n- affected component: {}\n- earliest onset: {}\n- required evidence IDs: {}\n",
+        incident.verification.expected_component,
+        incident.verification.expected_onset,
+        incident.verification.required_evidence_ids.join(", ")
+    ));
     prompt.push_str(
-        "\nReturn the initiating component, earliest supported onset timestamp, direct evidence record IDs, and a concise evidence-grounded summary.",
+        "\nReturn the initiating component, earliest supported onset timestamp, every policy-required evidence ID supported by the supplied records, and a concise evidence-grounded summary. Additional known evidence IDs are allowed.",
     );
     prompt
 }
@@ -300,11 +355,11 @@ impl RigDemoConfig {
             _ => return Err(RigConfigError::InvalidExecutionMode),
         }
 
-        let api_key = std::env::var("OPENAI_API_KEY")
+        let api_key = std::env::var("GEMINI_API_KEY")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .ok_or(RigConfigError::MissingApiKey)?;
-        let model = std::env::var("MELD_OPENAI_MODEL")
+        let model = std::env::var("MELD_GEMINI_MODEL")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_MODEL.to_owned());
@@ -339,13 +394,13 @@ impl RigDemoConfig {
     }
 
     pub fn workers(&self) -> Vec<Arc<dyn Worker>> {
-        let first = RigWorker::openai(
+        let first = RigWorker::gemini(
             "Worker A",
             self.api_key.clone(),
             self.model.clone(),
             self.provider_timeout,
         );
-        let second = RigWorker::openai(
+        let second = RigWorker::gemini(
             "Worker B",
             self.api_key.clone(),
             self.model.clone(),
@@ -377,7 +432,7 @@ fn duration_from_env(name: &'static str, default_ms: u64) -> Result<Duration, Ri
 pub enum RigConfigError {
     #[error("MELD_EXECUTION_MODE must be 'deterministic' or 'rig'")]
     InvalidExecutionMode,
-    #[error("OPENAI_API_KEY is required when MELD_EXECUTION_MODE=rig")]
+    #[error("GEMINI_API_KEY is required when MELD_EXECUTION_MODE=rig")]
     MissingApiKey,
     #[error("{name} must be a positive whole number of milliseconds")]
     InvalidDuration { name: &'static str },

@@ -48,7 +48,7 @@ fn configure_demo(state: ApiState) -> Result<ApiState, Box<dyn std::error::Error
             tracing::info!(
                 event = "meld.execution_mode.configured",
                 execution_mode = "rig",
-                provider = "openai",
+                provider = "gemini",
                 model = config.model(),
                 "Meld configured real-agent mode"
             );

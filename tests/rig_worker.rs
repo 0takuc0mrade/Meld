@@ -55,14 +55,14 @@ fn valid_proposal(label: &str) -> IncidentAnalysisProposal {
 }
 
 fn request() -> WorkRequest {
-    WorkRequest {
-        mission: Mission::incident_fixture(),
-        token: AssignmentToken {
+    WorkRequest::new(
+        Mission::incident_fixture(),
+        AssignmentToken {
             task_id: TaskId(1),
             assignment_id: AssignmentId(1),
             generation: Generation(1),
         },
-    }
+    )
 }
 
 fn rig_worker(id: &str, outcome: Result<IncidentAnalysisProposal, AnalysisError>) -> RigWorker {
@@ -210,6 +210,45 @@ async fn two_rig_workers_use_normal_recovery_and_reject_generation_one_late() {
     };
     assert_eq!(accepted.submission.worker_id.as_str(), "Worker B");
     assert_eq!(accepted.submission.token.generation, Generation(2));
+    let first_parsed = completed
+        .events
+        .iter()
+        .position(|event| {
+            matches!(
+                &event.kind,
+                EventKind::AgentOutputParsed {
+                    worker_id,
+                    provider: "test-provider",
+                    model,
+                    output,
+                    ..
+                } if worker_id.as_str() == "Worker A"
+                    && model == "test-model"
+                    && output.incident_analysis.is_some()
+            )
+        })
+        .expect("Worker A's parsed output should be recorded before its delay");
+    let first_expired = completed
+        .events
+        .iter()
+        .position(|event| {
+            matches!(
+                &event.kind,
+                EventKind::AssignmentExpired { worker_id, .. }
+                    if worker_id.as_str() == "Worker A"
+            )
+        })
+        .expect("Worker A's lease should expire");
+    assert!(first_parsed < first_expired);
+    assert!(completed.events.iter().any(|event| matches!(
+        &event.kind,
+        EventKind::AgentOutputParsed {
+            worker_id,
+            provider: "test-provider",
+            model,
+            ..
+        } if worker_id.as_str() == "Worker B" && model == "test-model"
+    )));
 
     tokio::time::advance(Duration::from_secs(10)).await;
     tokio::task::yield_now().await;

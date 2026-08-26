@@ -201,7 +201,7 @@ The model integration is behind `rig-worker`; the default deterministic build re
 
 | Direct crate | Exact version | Enabled features | Purpose |
 | --- | --- | --- | --- |
-| `rig-core` | 0.42.0 | defaults off | OpenAI provider/client types used by the adapter |
+| `rig-core` | 0.42.0 | defaults off | Gemini provider/client types used by the adapter |
 | `rig-agent` | 0.42.0 | defaults off | Typed extractor/agent runtime |
 | `reqwest` | 0.13.4 | `rustls-no-provider` | Steer Rig's HTTP graph away from its default crypto provider |
 | `rustls` | 0.23.43 | `ring`, `std`, `tls12`; defaults off | Explicit process-wide TLS crypto provider |
@@ -236,8 +236,14 @@ The recovery gate adds no Cargo, JavaScript, or system-package dependency. It ha
 - `actions/checkout` is pinned to the immutable commit `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1), with credential persistence disabled;
 - the runner image and Rust toolchain are pinned to `ubuntu-24.04` and Rust 1.95.0;
 - Cargo always uses the committed lockfile;
-- deterministic mode receives no OpenAI secret;
+- deterministic mode receives no Gemini secret;
 - the repository secret is evaluated only for the server-start step when the manual `rig` input is selected;
 - the workflow gives the agent no shell, filesystem, GitHub API, or arbitrary URL-fetching tool.
 
 GitHub-hosted runner images and the `rustup` distribution channel remain external trust boundaries. An immutable action commit prevents tag movement but does not independently audit that action's implementation. A hardened production pipeline would additionally pin or attest the runner image, pre-stage the toolchain, retain signed build provenance, and run on an isolated secret-free builder before attaching runtime credentials.
+
+## Gemini provider migration review
+
+The 2026-08-26 migration from OpenAI to Gemini uses the provider module already contained in pinned `rig-core 0.42.0`. `Cargo.toml`, `Cargo.lock`, enabled features, package count, build scripts, proc macros, native links, registries, and TLS provider are unchanged. The reviewed trust graph therefore does not expand.
+
+Rig's Gemini GenerateContent client sends the credential as the HTTPS request's `key` query parameter. Meld never logs the constructed URL, and ordinary tracing accepts only Meld-owned targets, but the URL remains visible to the local HTTP stack, Google, and any explicitly configured terminating proxy. Builds run without the credential; only the already-built process should receive `GEMINI_API_KEY`. Rig mode also transmits the mission prompt to Google, so deterministic mode is required for data that has not been approved for external processing.

@@ -50,11 +50,11 @@ jobs:
       - name: Start Meld
         shell: bash
         env:
-          OPENAI_API_KEY: ${{ inputs.execution_mode == 'rig' && secrets.OPENAI_API_KEY || '' }}
+          GEMINI_API_KEY: ${{ inputs.execution_mode == 'rig' && secrets.GEMINI_API_KEY || '' }}
         run: |
           set -euo pipefail
-          if [[ "$MELD_EXECUTION_MODE" == "rig" && -z "$OPENAI_API_KEY" ]]; then
-            echo "Rig mode requires the OPENAI_API_KEY repository secret." >&2
+          if [[ "$MELD_EXECUTION_MODE" == "rig" && -z "$GEMINI_API_KEY" ]]; then
+            echo "Rig mode requires the GEMINI_API_KEY repository secret." >&2
             exit 1
           fi
           target/debug/meld >"$RUNNER_TEMP/meld.log" 2>&1 &

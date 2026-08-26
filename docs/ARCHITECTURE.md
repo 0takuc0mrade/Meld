@@ -11,14 +11,14 @@ A worker cannot set a task to `Completed`. It can only submit a typed candidate 
 
 ## Phase 3 implementation status
 
-Phase 3 adds a real-agent boundary without moving authority out of Rust. `src/rig_worker.rs` implements the existing `Worker` trait with Rig 0.42.0 and one OpenAI provider. The adapter asks for a typed `IncidentAnalysisProposal`; it does not receive state-store access, choose generations, verify its own answer, or publish authoritative events.
+Phase 3 adds a real-agent boundary without moving authority out of Rust. `src/rig_worker.rs` implements the existing `Worker` trait with Rig 0.42.0 and one Gemini provider. The adapter asks for a typed `IncidentAnalysisProposal`; it does not receive state-store access, choose generations, verify its own answer, or publish events directly. It can report a narrow `WorkerActivity` value through the current `WorkRequest`; a supervisor-owned reporter validates that the referenced assignment was issued and is the only component that appends the sequenced event.
 
-The browser API and frontend assets remain unchanged. `POST /api/missions/demo` chooses workers from configuration and then enters the same `Supervisor::run_task` path in both modes:
+Endpoint paths, existing response fields, and frontend assets remain unchanged. The API now adds safe agent-activity metadata and structured verification proof fields. `POST /api/missions/demo` chooses workers from configuration and then enters the same `Supervisor::run_task` path in both modes:
 
 ```mermaid
 flowchart LR
     Config{Execution mode} -->|deterministic| Fake[Controlled deterministic workers]
-    Config -->|rig feature + rig mode| Rig[RigWorker / OpenAI]
+    Config -->|rig feature + rig mode| Rig[RigWorker / Gemini]
     Fake --> Supervisor
     Rig --> Supervisor
     Supervisor --> Tokens[Assignment token checks]
@@ -28,9 +28,9 @@ flowchart LR
 
 The incident mission supplies timestamped component records. An agent proposes the affected component, onset, supporting record IDs, and summary. Rust then requires the expected component and onset, rejects unknown evidence IDs, and requires the policy's evidence set. Structured extraction makes output parseable; deterministic verification decides whether it is acceptable.
 
-In real-agent mode, Worker A calls the model normally and then a generic `ControlledDelayWorker` withholds the completed result. Its 30-second assignment expires, Worker B runs generation 2 through the same Rig adapter, and its verified result becomes authoritative. Worker A later submits its genuine but stale generation-1 proposal through the normal submission method and is rejected by token generation.
+In real-agent mode, Worker A calls the model normally and then a generic `ControlledDelayWorker` withholds the completed result. Its 35-second assignment expires, Worker B runs generation 2 through the same Rig adapter, and its verified result becomes authoritative. Worker A later submits its genuine but stale generation-1 proposal through the normal submission method and is rejected by token generation.
 
-Provider calls have a 20-second server-side timeout. The default 55-second post-result delay is greater than the 30-second lease plus one provider timeout, so generation 2 has a bounded opportunity to complete first. Configuration validation rejects timing values that would break this ordering.
+Provider calls have a 25-second server-side timeout. The default 65-second post-result delay is greater than the 35-second lease plus one provider timeout, so generation 2 has a bounded opportunity to complete first. Configuration validation rejects timing values that would break this ordering. The measured final live run completed its full stale-return proof in 77.567 seconds.
 
 The Phase 2 transport remains the current transport implementation. `src/domain.rs` contains the types and `TaskState`; `src/supervisor.rs` remains the only state mutation boundary; `src/worker.rs` contains the object-safe worker trait and composable workers; `src/verifier.rs` contains the deterministic verifier; and `src/events.rs` contains immutable sequenced events.
 
@@ -56,6 +56,8 @@ flowchart LR
 ```
 
 The worker and deadline race is intentional. Both call supervisor methods which compare the assignment token while holding the authoritative store lock, so only one can make the decisive transition.
+
+Real workers additionally receive a capability-limited activity reporter. It has no state-transition operation. `RigWorker` awaits it when Gemini execution starts, when a typed output is parsed, or when execution fails; the supervisor checks that the referenced assignment exists and appends an immutable event. Because `ControlledDelayWorker<RigWorker>` awaits the inner worker before sleeping, Worker A's `agent.output.parsed` event is committed before the lease expires even though its `WorkerOutput` is withheld. Snapshot and SSE clients can therefore distinguish “model work finished” from “authority to submit remained valid.”
 
 ## Smallest architecture for the MVP
 
@@ -532,7 +534,7 @@ Exit criterion: a browser renders only backend state/events and the stale result
 
 ### Day 3 — integration, security, and rehearsal
 
-Status: Phase 3 integration, fallback, offline tests, dependency review, and a CI-workflow recovery gate are complete in code on 2026-08-25. A live key authenticated successfully, but OpenAI returned `429 insufficient_quota`; live model output and a full two-provider-call recovery therefore remain unverified until API credit is available.
+Status: Phase 3 integration, fallback, offline tests, dependency review, and a CI-workflow recovery gate are complete in code. On 2026-08-26 the single provider adapter moved from OpenAI to Gemini without changing the reliability kernel or Cargo dependency graph. Credentialed Gemini verification status is recorded in `BUILD_LOG.md`.
 
 1. Review the Rig dependency delta and add the adapter only if it is stable enough for the demo.
 2. Keep a deterministic local worker mode as an offline fallback that exercises identical supervisor logic.

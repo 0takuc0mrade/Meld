@@ -26,11 +26,11 @@ Workers are untrusted proposal producers. Only the supervisor can mutate lifecyc
 
 `deterministic` is the default. It needs no account, network, or secret and exercises the complete lease, reassignment, verification, completion, and stale-result path.
 
-`rig` enables two real OpenAI-backed workers through Rig. Each model response is extracted into a typed incident proposal, then checked by the same Rust verifier used in deterministic mode. The default model is `gpt-5-mini`. A provider failure, malformed structured response, or request timeout becomes a normal worker failure; it never bypasses the supervisor.
+`rig` enables two real Gemini-backed workers through Rig. Each model response is extracted into a typed incident proposal, then checked by the same Rust verifier used in deterministic mode. The default model is `gemini-3.6-flash`. A provider failure, malformed structured response, or request timeout becomes a normal worker failure; it never bypasses the supervisor.
 
 The Cargo feature and runtime mode are separate controls:
 
-- `--features rig-worker` compiles the reviewed Rig/OpenAI dependency graph.
+- `--features rig-worker` compiles the reviewed Rig/Gemini dependency graph.
 - `MELD_EXECUTION_MODE=rig` selects it at runtime.
 - Omitting either leaves the known-good deterministic path available.
 
@@ -50,7 +50,7 @@ Real-agent mode:
 
 ```bash
 cp .env.example .env.local
-# Put a scoped OpenAI project key in .env.local, then:
+# Put a scoped Gemini API key in .env.local, then:
 set -a
 source .env.local
 set +a
@@ -59,16 +59,18 @@ cargo run --locked --features rig-worker
 
 `.env.local` is ignored by Git. Do not paste credentials into chat, commit them, place them in browser assets, or enable shell tracing while sourcing the file. Use a scoped, low-value project key and rotate it after a public demo.
 
+Rig mode sends the fixed incident mission records to the configured Gemini model. Use deterministic mode when external transmission is not intended. The current fixture is synthetic, but future user-authored missions will need an explicit data-handling policy before live-provider use.
+
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MELD_EXECUTION_MODE` | `deterministic` | `deterministic` or `rig` |
-| `OPENAI_API_KEY` | none | Required only in `rig` mode |
-| `MELD_OPENAI_MODEL` | `gpt-5-mini` | OpenAI model used by both Rig workers |
-| `MELD_ASSIGNMENT_LEASE_MS` | `30000` | Generation-1 lease in real-agent mode |
-| `MELD_PROVIDER_TIMEOUT_MS` | `20000` | Maximum duration of one provider request |
-| `MELD_AGENT_A_DELAY_MS` | `55000` | Delay applied after Worker A produces its result |
+| `GEMINI_API_KEY` | none | Required only in `rig` mode |
+| `MELD_GEMINI_MODEL` | `gemini-3.6-flash` | Gemini model used by both Rig workers |
+| `MELD_ASSIGNMENT_LEASE_MS` | `35000` | Generation-1 lease in real-agent mode |
+| `MELD_PROVIDER_TIMEOUT_MS` | `25000` | Maximum duration of one provider request |
+| `MELD_AGENT_A_DELAY_MS` | `65000` | Delay applied after Worker A produces its result |
 | `MELD_BIND` | `127.0.0.1:3000` | HTTP bind address |
 
 Meld refuses unsafe timing combinations: provider timeout must be shorter than the lease, and Worker A's delay must exceed the lease plus one provider timeout. This makes Worker B able to finish before Worker A's stale return.
@@ -95,13 +97,19 @@ The repository includes a manually dispatched GitHub Actions recovery gate. It c
 
 In GitHub, open **Actions → Meld recovery gate → Run workflow** and select `deterministic`. The run publishes the complete backend-authored lifecycle in its job summary. This is Meld operating inside an actual remote CI workflow, not a browser animation or a unit-test-only simulation.
 
-The optional `rig` choice additionally needs an `OPENAI_API_KEY` repository secret with available API credit. The secret is exposed only to the server-start step when Rig mode is explicitly selected. Do not add a key merely to run the deterministic proof.
+The optional `rig` choice additionally needs a `GEMINI_API_KEY` repository secret with available quota. The secret is exposed only to the server-start step when Rig mode is explicitly selected. Do not add a key merely to run the deterministic proof.
 
 The same gate can be rehearsed locally while Meld is running:
 
 ```bash
 bash scripts/verify-recovery.sh
 ```
+
+## Live Gemini proof
+
+The final credentialed run on 2026-08-26 completed the full recovery in approximately 77.6 seconds. Worker A produced a real parsed Gemini result in 12.562 seconds, before its 35-second lease expired. Worker B then produced a separate real result in 6.252 seconds; Rust verified and accepted generation 2. After the 65-second controlled post-result delay, Worker A's genuine generation-1 output arrived and was rejected stale. Generation 2 remained authoritative.
+
+Snapshots and SSE now include additive `agent.execution.started`, `agent.output.parsed`, and `agent.execution.failed` events. Safe metadata includes provider, model, duration, assignment identity, and structured candidate fields. Completed snapshots expose the accepted incident analysis and the deterministic checks that passed. Existing endpoint paths and fields are unchanged, and the browser's event ledger renders the new backend messages without frontend timers.
 
 ## API compatibility
 

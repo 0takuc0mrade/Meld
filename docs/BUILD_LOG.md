@@ -340,7 +340,7 @@ Added `README.md`, `.env.example`, `src/rig_worker.rs`, `tests/rig_worker.rs`, a
 
 `docs/RUST_LEARNING.md` now explains the exact Phase 3 Rust mechanisms: Cargo features, the second object-safe async trait boundary, owned provider futures, Serde/Schemars extraction, proposal-versus-verification, Tokio provider timeout, safe error mapping, process-wide crypto initialization, and validated environment configuration.
 
-### Remaining limitations
+### Remaining limitations at the Phase 3 handoff
 
 - A scoped OpenAI key and network/credit availability are still required for the controlled live smoke.
 - The feature-enabled supply chain is much larger than the deterministic fallback.
@@ -355,3 +355,51 @@ Meld now has an actual developer workflow rather than a demo-specific chat adapt
 The local deterministic rehearsal passed over HTTP with task 1, Worker B, generation 2, and final event sequence 13. Server logs contained the complete authoritative progression from `task.created` through `submission.stale_rejected`. The workflow publishes those backend events in GitHub's job summary.
 
 The workflow uses read-only permissions, manual dispatch, an exact checkout action commit, disabled checkout credential persistence, a pinned runner/toolchain, and the committed Cargo lockfile. Deterministic mode receives no provider secret. Rig mode evaluates the repository secret only in the server-start step and remains intentionally unrun while the current OpenAI project reports insufficient quota.
+
+## 2026-08-26 — Final live Gemini proof and backend freeze
+
+The user approved transmitting only the synthetic checkout fixture. Meld's single live adapter uses Rig 0.42.0's built-in Gemini GenerateContent client. Runtime configuration is `GEMINI_API_KEY` plus optional `MELD_GEMINI_MODEL`; the GitHub workflow expects the matching repository secret. No credential value was printed, added to a build process, or committed.
+
+### Model availability and narrow smoke
+
+An authenticated `models.list` request succeeded and confirmed access to Gemini 2.5, 3.x, Gemma, and specialized models. The initially configured `gemini-3.7-flash` reached the provider but exceeded a controlled 45-second smoke timeout. Although `gemini-2.5-flash` appeared in the list, an exact request returned `404 NOT_FOUND` and told this new user to select `gemini-3.6-flash`. Gemini 3.6 returned in about 8.4 seconds but its first `submit` tool call was malformed because the previous 400-token maximum truncated reasoning plus structured output.
+
+The minimal compatibility fix was to use the provider-recommended stable `gemini-3.6-flash` and raise the extractor maximum to 2,048 tokens. Retries remain zero. The next exact Rig extractor call succeeded, followed by the required narrow production path:
+
+`typed mission -> RigWorker -> Gemini -> IncidentAnalysisProposal -> WorkerOutput -> DeterministicVerifier`
+
+That smoke passed in 16.192 seconds. Gemini returned `payments-api`, onset `2026-08-24T10:01:00Z`, and evidence `EV-101`, `EV-102`, and `EV-103`; the existing Rust verifier accepted it. The safe summary and typed fields were printed, but no prompt, key, headers, raw provider payload, or hidden reasoning was logged.
+
+### First full attempt and honest verification failure
+
+The first two-worker run proved that Worker A completed real Gemini work in 10.535 seconds before its 35-second lease expired. Worker B completed a second real Gemini call in 8.028 seconds. Rust then rejected Worker B with the exact code `required_incident_evidence_missing`, moved the task to `Failed` after exhausting workers, and later rejected Worker A's generation-1 result as stale. No verification rule or generation check was weakened.
+
+The prompt asked for records supporting the component and onset, while the existing policy requires every member of its explicit evidence set. The minimal alignment fix was to include the deterministic policy's expected component, onset, and required evidence IDs in the typed mission prompt and ask for every supported required ID. This makes the acceptance contract explicit; it does not make Gemini authoritative or change the verifier.
+
+### Frontend-safe agent activity
+
+The existing domain events showed worker execution but not that Gemini had completed inside `ControlledDelayWorker` before the lease expired. A capability-limited `WorkerActivityReporter` was added to `WorkRequest`. `RigWorker` reports start, parsed output, or safe failure; a supervisor-owned implementation validates the issued assignment and appends `agent.execution.started`, `agent.output.parsed`, or `agent.execution.failed`. It has no state-mutation method.
+
+The API/SSE change is additive. Existing endpoints, fields, and event meanings are unchanged. New event metadata includes worker, assignment, generation, provider, model, duration, and safe structured candidate output. Completed snapshots add incident analysis plus seven explicit passed checks and the statement “Result satisfied Meld's deterministic acceptance policy.” The unchanged frontend already renders arbitrary backend event messages in its ledger and the accepted summary in its proof panel, so the real actions are visible without terminal output. No frontend source file changed.
+
+### Successful full recovery and measured timing
+
+The final credentialed run passed with 17 backend-authored events:
+
+- Worker A Gemini latency: 12.562 seconds;
+- assignment lease: 35.000 seconds;
+- Worker A output parsed at sequence 5, 22.438 seconds before lease expiry at sequence 7;
+- recovery and reassignment: under 1 millisecond;
+- Worker B Gemini latency: 6.252 seconds;
+- deterministic verification and completion: under 1 millisecond at recorded millisecond resolution;
+- controlled post-result delay: 65.000 seconds;
+- Worker A stale arrival: 77.567 seconds after agent execution began;
+- total mission proof: approximately 77.567 seconds, comfortably under two minutes.
+
+Worker B's accepted generation-2 output contained `payments-api`, onset `2026-08-24T10:01:00Z`, and exactly `EV-101`/`EV-102`. All seven reported deterministic checks passed. Worker A's genuine parsed generation-1 output later entered the normal submission path and was rejected as stale; the accepted Worker B result remained unchanged.
+
+The provider timeout, lease, and delay defaults are now 25, 35, and 65 seconds respectively. The invariant `delay > lease + provider timeout` remains startup-validated. Provider/API errors, malformed output, and timeouts still map into safe worker failures with no Rig retry loop.
+
+### Fallback and validation status
+
+After the live run, a credential-free default build ran the same HTTP workflow successfully: Worker B generation 2 completed and generation 1 was rejected stale in the original 13-event deterministic lifecycle. Final formatting and strict all-feature Clippy passed. The default suite passed 20 integration tests (7 API/SSE, 4 incident verification, and 9 lifecycle); the feature-enabled suite passed those 20 plus 6 Rig-boundary tests. Script and workflow-YAML syntax checks passed, `git diff --check` passed, `.env.local` remained ignored, and the tracked-tree secret scan found no Gemini or OpenAI key pattern. Cargo dependencies, features, and `Cargo.lock` did not change: the graph remains Meld plus 193 checksum-locked crates.io packages with no alternate source. A diff guard confirmed no change under `static/` or `tokens.css`.

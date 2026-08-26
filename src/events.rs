@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use crate::domain::{
     AssignmentId, FailureReason, Generation, SubmissionId, SubmissionRejection, TaskId,
-    TerminalFailure, VerificationCode, WorkerId,
+    TerminalFailure, VerificationCode, WorkerId, WorkerOutput,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,6 +25,31 @@ pub enum EventKind {
         worker_id: WorkerId,
         assignment_id: AssignmentId,
         generation: Generation,
+    },
+    AgentExecutionStarted {
+        worker_id: WorkerId,
+        assignment_id: AssignmentId,
+        generation: Generation,
+        provider: &'static str,
+        model: String,
+    },
+    AgentOutputParsed {
+        worker_id: WorkerId,
+        assignment_id: AssignmentId,
+        generation: Generation,
+        provider: &'static str,
+        model: String,
+        duration_ms: u64,
+        output: WorkerOutput,
+    },
+    AgentExecutionFailed {
+        worker_id: WorkerId,
+        assignment_id: AssignmentId,
+        generation: Generation,
+        provider: &'static str,
+        model: String,
+        duration_ms: u64,
+        reason: String,
     },
     WorkerFailed {
         worker_id: WorkerId,
@@ -86,6 +111,9 @@ impl EventKind {
             Self::TaskCreated => "task.created",
             Self::TaskAssigned { .. } => "task.assigned",
             Self::WorkerStarted { .. } => "worker.started",
+            Self::AgentExecutionStarted { .. } => "agent.execution.started",
+            Self::AgentOutputParsed { .. } => "agent.output.parsed",
+            Self::AgentExecutionFailed { .. } => "agent.execution.failed",
             Self::WorkerFailed { reason, .. } => match reason {
                 FailureReason::DeadlineExceeded => "worker.timeout",
                 _ => "worker.failed",

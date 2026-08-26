@@ -194,6 +194,12 @@ async fn completed_snapshot_stays_authoritative_after_stale_result_becomes_api_v
     assert!(body.contains(r#""worker_id":"Worker B""#));
     assert!(body.contains(r#""generation":2"#));
     assert!(body.contains(r#""kind":"submission.stale_rejected""#));
+    assert!(body.contains(r#""affected_component":"payments-api""#));
+    assert!(body.contains(r#""onset":"2026-08-24T10:01:00Z""#));
+    assert!(body.contains(r#""code":"required_evidence""#));
+    assert!(
+        body.contains(r#""statement":"Result satisfied Meld's deterministic acceptance policy.""#)
+    );
 
     let after_stale = state
         .supervisor()

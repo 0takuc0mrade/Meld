@@ -9,7 +9,8 @@ use tokio::time::{Instant, sleep_until};
 use crate::domain::{
     Assignment, AssignmentId, AssignmentToken, FailureReason, Generation, Mission, Submission,
     SubmissionId, SubmissionRejection, TaskId, TaskState, TerminalFailure, VerificationError,
-    VerifiedOutput, WorkRequest, WorkerError, WorkerId, WorkerOutput,
+    VerifiedOutput, WorkRequest, WorkerActivity, WorkerActivityFuture, WorkerActivityReporter,
+    WorkerError, WorkerId, WorkerOutput,
 };
 use crate::events::{EventKind, MeldEvent};
 use crate::verifier::Verifier;
@@ -120,6 +121,21 @@ pub struct Supervisor {
     verifier: Arc<dyn Verifier>,
 }
 
+struct SupervisorActivityReporter {
+    supervisor: Arc<Supervisor>,
+}
+
+impl WorkerActivityReporter for SupervisorActivityReporter {
+    fn report(&self, activity: WorkerActivity) -> WorkerActivityFuture {
+        let supervisor = Arc::clone(&self.supervisor);
+        Box::pin(async move {
+            if let Err(error) = supervisor.record_worker_activity(activity).await {
+                tracing::error!(%error, "failed to record worker activity");
+            }
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransitionOutcome {
     Applied,
@@ -190,6 +206,100 @@ impl Supervisor {
             last_generation: task.last_generation,
             events: task.events.iter().cloned().collect(),
         })
+    }
+
+    async fn record_worker_activity(
+        &self,
+        activity: WorkerActivity,
+    ) -> Result<(), SupervisorError> {
+        let (token, worker_id, kind) = match activity {
+            WorkerActivity::AgentExecutionStarted {
+                token,
+                worker_id,
+                provider,
+                model,
+            } => (
+                token,
+                worker_id.clone(),
+                EventKind::AgentExecutionStarted {
+                    worker_id,
+                    assignment_id: token.assignment_id,
+                    generation: token.generation,
+                    provider,
+                    model,
+                },
+            ),
+            WorkerActivity::AgentOutputParsed {
+                token,
+                worker_id,
+                provider,
+                model,
+                duration_ms,
+                output,
+            } => (
+                token,
+                worker_id.clone(),
+                EventKind::AgentOutputParsed {
+                    worker_id,
+                    assignment_id: token.assignment_id,
+                    generation: token.generation,
+                    provider,
+                    model,
+                    duration_ms,
+                    output,
+                },
+            ),
+            WorkerActivity::AgentExecutionFailed {
+                token,
+                worker_id,
+                provider,
+                model,
+                duration_ms,
+                reason,
+            } => (
+                token,
+                worker_id.clone(),
+                EventKind::AgentExecutionFailed {
+                    worker_id,
+                    assignment_id: token.assignment_id,
+                    generation: token.generation,
+                    provider,
+                    model,
+                    duration_ms,
+                    reason,
+                },
+            ),
+        };
+
+        let event = {
+            let mut store = self.state.store.lock().await;
+            let task = store
+                .tasks
+                .get(&token.task_id)
+                .ok_or(SupervisorError::TaskNotFound(token.task_id))?;
+            let assignment_exists = task.events.iter().any(|event| {
+                matches!(
+                    &event.kind,
+                    EventKind::TaskAssigned {
+                        worker_id: assigned_worker,
+                        assignment_id,
+                        generation,
+                    } if assigned_worker == &worker_id
+                        && *assignment_id == token.assignment_id
+                        && *generation == token.generation
+                )
+            });
+            if !assignment_exists {
+                return Err(SupervisorError::InvalidTransition {
+                    task_id: token.task_id,
+                    action: "record activity for an unknown assignment",
+                    state: task.state.name(),
+                });
+            }
+            store.append_event(token.task_id, kind, self.state.event_history_limit)?
+        };
+        self.publish(vec![event]);
+        Ok(())
     }
 
     pub async fn assign_next_worker(
@@ -691,11 +801,15 @@ impl Supervisor {
             let worker_supervisor = Arc::clone(self);
             let worker_token = token;
             let worker_task = tokio::spawn(async move {
+                let activity_reporter: Arc<dyn WorkerActivityReporter> =
+                    Arc::new(SupervisorActivityReporter {
+                        supervisor: Arc::clone(&worker_supervisor),
+                    });
                 let result = worker
-                    .execute(WorkRequest {
-                        mission,
-                        token: worker_token,
-                    })
+                    .execute(
+                        WorkRequest::new(mission, worker_token)
+                            .with_activity_reporter(activity_reporter),
+                    )
                     .await;
                 match result {
                     Ok(output) => {

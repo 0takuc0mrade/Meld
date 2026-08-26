@@ -364,7 +364,7 @@ This is not a sandbox. Enabling the feature gives those crates normal build/runt
 
 **Where:** `IncidentAnalyzer` inside `src/rig_worker.rs`.
 
-**What:** `RigWorker` depends on a very small behavior—turn a prompt into a typed proposal—rather than depending directly on an OpenAI client throughout the application. Like `Worker`, it returns a boxed `Future` so tests can use a trait object without adding `async-trait`.
+**What:** `RigWorker` depends on a very small behavior—turn a prompt into a typed proposal—rather than depending directly on a Gemini client throughout the application. Like `Worker`, it returns a boxed `Future` so tests can use a trait object without adding `async-trait`.
 
 ```rust
 type AnalysisFuture = Pin<Box<dyn Future<Output = Result<Proposal, AnalysisError>> + Send>>;
@@ -385,7 +385,7 @@ trait IncidentAnalyzer: Send + Sync {
 **What:** The wrapper is generic over any `W: Worker`. Because `RigWorker` implements `Worker`, the compiler can instantiate `ControlledDelayWorker<RigWorker>` without either type knowing about the other.
 
 ```rust
-let real = RigWorker::openai(/* ... */);
+let real = RigWorker::gemini(/* ... */);
 let late = ControlledDelayWorker::new(real, agent_a_delay);
 ```
 
@@ -488,3 +488,53 @@ Rust crate/module paths normally become tracing targets, so Meld retains its own
 **Problem solved:** Converting a dependency error into `WorkerError::Execution` protects later API responses and Meld-authored logs, but it cannot retract a verbose log the dependency emitted before returning. Filtering at the subscriber boundary closes that separate channel.
 
 **Tradeoff:** This intentionally sacrifices low-level dependency diagnostics. Security-sensitive production logs should default to the least data; targeted dependency tracing belongs in an isolated, explicitly enabled diagnostic mode with its own redaction review.
+
+## An async capability that reports activity without granting authority
+
+**Where:** `WorkerActivityReporter` and `WorkRequest` in `src/domain.rs`, `SupervisorActivityReporter` in `src/supervisor.rs`, and the calls in `RigWorker::execute`.
+
+**What:** `WorkRequest` carries an optional `Arc<dyn WorkerActivityReporter>`. Its object-safe method returns another boxed, owned future:
+
+```rust
+fn report(&self, activity: WorkerActivity) -> WorkerActivityFuture;
+```
+
+`RigWorker` awaits that future when Gemini starts, when Serde has produced a typed output, or when execution fails. The reporter exposes no assignment, verification, or completion operation. Its supervisor implementation checks the task's stored assignment history and only then appends an immutable event.
+
+**Problem solved:** Agent A's inner future completed 22.438 seconds before its lease expired in the final live run. Without a progress boundary, the outer delayed future would hide that fact until its eventual stale submission. The capability makes completion observable while keeping all authority in `Supervisor`.
+
+**Why `Arc<dyn ...>`:** The concrete reporter owns an `Arc<Supervisor>`, but the worker depends only on one narrow behavior. `Arc` gives the request an owned, thread-safe handle that can cross the spawned Tokio task and live for the future's `'static` lifetime.
+
+## The exact Gemini future flow in the live run
+
+The final execution path is:
+
+1. `Supervisor::run_task` creates a token and a reporter.
+2. `RigWorker::execute` owns the prompt, model name, key clone, and request token inside its boxed future.
+3. Rig's extractor future sends Gemini's GenerateContent request and asks the model to call the schema-derived `submit` tool.
+4. `tokio::time::timeout` bounds that external future to 25 seconds.
+5. Serde converts the tool arguments into `IncidentAnalysisProposal`.
+6. Meld converts the proposal into `WorkerOutput` and awaits the activity reporter.
+7. For Worker A, `ControlledDelayWorker<RigWorker>` stores that real `Result<WorkerOutput, WorkerError>` and sleeps for 65 seconds.
+8. The separate 35-second deadline future expires generation 1 while the stored output still exists.
+9. Worker B follows the same provider and parsing path, then submits generation 2 normally.
+10. The verifier runs synchronously over typed Rust data; SSE carries only the supervisor-authored outcome and safe activity events.
+11. Worker A wakes and submits its stored output with its original token, which fails the generation check.
+
+This is the concrete meaning of “finishing work and retaining authority to commit it are separate.” The model future can succeed, the parsed Rust value can exist, and the activity can be visible, while the assignment token later becomes unusable.
+
+## Output budgets affect structured tool calls
+
+**Where:** `MAX_OUTPUT_TOKENS` in `src/rig_worker.rs`.
+
+Gemini 3.6 Flash initially returned `MalformedFunctionCall` at the 400-token limit. The model had begun the `submit` arguments but did not finish a valid call. Increasing the allowance to 2,048 let the same schema and prompt complete; no retry or permissive parser was added.
+
+This exposes an important boundary: schema derivation specifies the required shape, but the provider still needs enough generation budget to produce that shape. A truncated tool call is not partial success. Rig returns an extraction/completion error, Meld maps it to a typed worker failure, and normal supervision decides whether another assignment is available.
+
+## SSE transports facts, not control
+
+**Where:** `EventKind` in `src/events.rs`, its transport mapping in `src/api.rs`, and the browser's generic ledger reconciliation in `static/app.js`.
+
+The new agent events are stored in the same bounded history and assigned the same monotonic sequence as lifecycle events. Snapshot responses include the full retained history, while SSE emits each `EventResponse` with its sequence as the event ID. The browser merges both sources and deduplicates by sequence.
+
+The added payload can say which worker called Gemini, which model ran, how long it took, and which safe typed fields were parsed. It cannot expire a lease or accept a result. The existing `verification.passed` and `task.completed` events remain separate, which prevents “model returned JSON” from being presented as “Meld accepted it.”
